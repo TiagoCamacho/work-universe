@@ -1,0 +1,143 @@
+{
+  "name": "work-universe",
+  "displayName": "Work Universe",
+  "description": "An unified workspace for multiple projects",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.145.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "workUniverse",
+          "title": "Work Universe",
+          "icon": "media/universe.svg"
+        }
+      ]
+    },
+    "views": {
+      "workUniverse": [
+        {
+          "id": "workUniverse.universes",
+          "name": "Universes",
+          "icon": "media/universe.svg"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "workUniverse.universes",
+        "contents": "A universe groups several folders (e.g. backend and frontend) in one window. Only one is active at a time: the explorer, search and tabs follow it.\n[Create Universe](command:workUniverse.createUniverse)"
+      }
+    ],
+    "commands": [
+      { "command": "workUniverse.createUniverse", "title": "Create Universe", "category": "Work Universe", "icon": "$(add)" },
+      { "command": "workUniverse.renameUniverse", "title": "Rename Universe", "category": "Work Universe", "icon": "$(edit)" },
+      { "command": "workUniverse.deleteUniverse", "title": "Delete Universe", "category": "Work Universe", "icon": "$(trash)" },
+      { "command": "workUniverse.addWorkspace", "title": "Add Workspace Folder", "category": "Work Universe", "icon": "$(new-folder)" },
+      { "command": "workUniverse.removeWorkspace", "title": "Remove Workspace", "category": "Work Universe", "icon": "$(close)" },
+      { "command": "workUniverse.renameWorkspace", "title": "Rename Workspace", "category": "Work Universe", "icon": "$(edit)" },
+      { "command": "workUniverse.setWorkspaceColor", "title": "Set Workspace Color", "category": "Work Universe", "icon": "$(symbol-color)" },
+      { "command": "workUniverse.setWorkspaceIcon", "title": "Set Workspace Icon", "category": "Work Universe", "icon": "$(smiley)" },
+      { "command": "workUniverse.switchWorkspace", "title": "Switch to Workspace", "category": "Work Universe", "icon": "$(arrow-right)" },
+      { "command": "workUniverse.quickSwitch", "title": "Quick Switch Workspace", "category": "Work Universe", "icon": "$(list-selection)" },
+      { "command": "workUniverse.nextWorkspace", "title": "Next Workspace", "category": "Work Universe" },
+      { "command": "workUniverse.previousWorkspace", "title": "Previous Workspace", "category": "Work Universe" },
+      { "command": "workUniverse.searchUniverse", "title": "Search Whole Universe", "category": "Work Universe", "icon": "$(search)" },
+      { "command": "workUniverse.repairUniverse", "title": "Repair Universe Window", "category": "Work Universe", "icon": "$(tools)" },
+      { "command": "workUniverse.refresh", "title": "Refresh", "category": "Work Universe", "icon": "$(refresh)" }
+    ],
+    "menus": {
+      "view/title": [
+        { "command": "workUniverse.createUniverse", "when": "view == workUniverse.universes", "group": "navigation@1" },
+        { "command": "workUniverse.quickSwitch", "when": "view == workUniverse.universes", "group": "navigation@2" },
+        { "command": "workUniverse.refresh", "when": "view == workUniverse.universes", "group": "navigation@3" }
+      ],
+      "view/item/context": [
+        { "command": "workUniverse.addWorkspace", "when": "view == workUniverse.universes && viewItem =~ /^universe/", "group": "inline@1" },
+        { "command": "workUniverse.searchUniverse", "when": "view == workUniverse.universes && viewItem =~ /^universe/", "group": "inline@2" },
+        { "command": "workUniverse.addWorkspace", "when": "view == workUniverse.universes && viewItem =~ /^universe/", "group": "1_edit@1" },
+        { "command": "workUniverse.searchUniverse", "when": "view == workUniverse.universes && viewItem =~ /^universe/", "group": "1_edit@2" },
+        { "command": "workUniverse.renameUniverse", "when": "view == workUniverse.universes && viewItem =~ /^universe/", "group": "1_edit@3" },
+        { "command": "workUniverse.repairUniverse", "when": "view == workUniverse.universes && viewItem == universe-current", "group": "1_edit@4" },
+        { "command": "workUniverse.deleteUniverse", "when": "view == workUniverse.universes && viewItem =~ /^universe/", "group": "9_danger@1" },
+
+        { "command": "workUniverse.switchWorkspace", "when": "view == workUniverse.universes && viewItem == workspace", "group": "inline@1" },
+        { "command": "workUniverse.switchWorkspace", "when": "view == workUniverse.universes && viewItem =~ /^workspace/", "group": "1_open@1" },
+        { "command": "workUniverse.renameWorkspace", "when": "view == workUniverse.universes && viewItem =~ /^workspace/", "group": "2_edit@1" },
+        { "command": "workUniverse.setWorkspaceIcon", "when": "view == workUniverse.universes && viewItem =~ /^workspace/", "group": "2_edit@2" },
+        { "command": "workUniverse.setWorkspaceColor", "when": "view == workUniverse.universes && viewItem =~ /^workspace/", "group": "2_edit@3" },
+        { "command": "workUniverse.removeWorkspace", "when": "view == workUniverse.universes && viewItem =~ /^workspace/", "group": "9_danger@1" }
+      ],
+      "commandPalette": [
+        { "command": "workUniverse.switchWorkspace", "when": "false" },
+        { "command": "workUniverse.refresh", "when": "false" }
+      ]
+    },
+    "keybindings": [
+      { "command": "workUniverse.quickSwitch", "key": "ctrl+alt+w", "mac": "cmd+alt+w" },
+      { "command": "workUniverse.nextWorkspace", "key": "ctrl+alt+]", "mac": "cmd+alt+]", "when": "workUniverse.inUniverse" },
+      { "command": "workUniverse.previousWorkspace", "key": "ctrl+alt+[", "mac": "cmd+alt+[", "when": "workUniverse.inUniverse" },
+      { "command": "workUniverse.searchUniverse", "key": "ctrl+alt+shift+f", "mac": "cmd+alt+shift+f", "when": "workUniverse.inUniverse" }
+    ],
+    "configuration": {
+      "title": "Work Universe",
+      "properties": {
+        "workUniverse.dirtyFiles": {
+          "type": "string",
+          "enum": ["prompt", "save", "keepOpen"],
+          "enumDescriptions": [
+            "Ask what to do with unsaved files when switching workspace.",
+            "Save unsaved files automatically before switching.",
+            "Keep unsaved files open as tabs after switching."
+          ],
+          "default": "prompt",
+          "description": "What to do with unsaved files of the current workspace when switching."
+        },
+        "workUniverse.applyColors": {
+          "type": "boolean",
+          "default": true,
+          "description": "Tint the title bar, activity bar and status bar with the active workspace's color."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run package",
+    "compile": "npm run check-types && npm run lint && node esbuild.js",
+    "watch": "npm-run-all -p watch:*",
+    "watch:esbuild": "node esbuild.js --watch",
+    "watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
+    "package": "npm run check-types && npm run lint && node esbuild.js --production",
+    "compile-tests": "tsc -p . --outDir out",
+    "watch-tests": "tsc -p . -w --outDir out",
+    "pretest": "npm run compile-tests && npm run compile && npm run lint",
+    "check-types": "tsc --noEmit",
+    "lint": "eslint src",
+    "test": "vscode-test"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.145.0",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "24.x",
+    "typescript-eslint": "^8.61.1",
+    "eslint": "^10.5.0",
+    "esbuild": "^0.28.1",
+    "npm-run-all": "^4.1.5",
+    "typescript": "^6.0.3",
+    "@vscode/test-cli": "^0.0.15",
+    "@vscode/test-electron": "^3.0.0"
+  },
+  "overrides": {
+    "diff": "^8.0.4",
+    "serialize-javascript": "^7.0.6"
+  }
+}
