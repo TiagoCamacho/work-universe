@@ -1,10 +1,10 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { ActionStore } from './actions/actionStore';
+import { ActionStore, PROJECT_ACTIONS_FILE } from './actions/actionStore';
 import { actionsFromScripts, guessIcon, isSafeScriptName, readScripts } from './actions/scripts';
 import { CustomAction } from './actions/types';
 import { UniverseStore } from './model/store';
-import { Universe, UniverseMode } from './model/types';
+import { Universe, UniverseMode, Workspace } from './model/types';
 import { findSolutionFiles } from './solution/solutionModel';
 import { isInside, sameUri } from './universe/paths';
 import { Switcher } from './universe/switcher';
@@ -297,8 +297,8 @@ export function registerCommands(
 		if (choice !== 'Delete') {
 			return;
 		}
+		// Custom actions belong to the project folders, so they stay for when a folder is added again.
 		await store.deleteUniverse(universe.id);
-		await Promise.all(universe.workspaces.map(w => actions.delete(w.id)));
 		if (isCurrent) {
 			// Files are cleaned up on the next activation, once nothing has them open.
 			await vscode.commands.executeCommand('workbench.action.closeFolder');
@@ -327,8 +327,8 @@ export function registerCommands(
 				return; // switch was cancelled
 			}
 		}
+		// Its custom actions stay: they belong to the folder and come back when it is added again.
 		await store.removeWorkspace(workspace.id);
-		await actions.delete(workspace.id);
 	});
 
 	register('workUniverse.renameWorkspace', async (node?: WorkspaceNode) => {
@@ -411,46 +411,94 @@ export function registerCommands(
 
 	register('workUniverse.repairUniverse', () => switcher.repair());
 
+	/** Starting actions for a new actions file: picked package.json scripts, or an example. Undefined if cancelled. */
+	async function initialActions(workspace: Workspace): Promise<CustomAction[] | undefined> {
+		const folder = vscode.Uri.parse(workspace.uri);
+		const allScripts = Object.keys(await readScripts(folder));
+		// Names that could smuggle a second command into the shell are not offered.
+		const scripts = allScripts.filter(isSafeScriptName);
+		if (scripts.length < allScripts.length) {
+			vscode.window.showWarningMessage(
+				`Work Universe: ${allScripts.length - scripts.length} package.json script(s) were skipped because their names contain unusual characters.`,
+			);
+		}
+		let initial: CustomAction[] = [];
+		if (scripts.length) {
+			type Item = vscode.QuickPickItem & { script: string };
+			const picked = await vscode.window.showQuickPick<Item>(
+				scripts.map(script => ({ label: `$(${guessIcon(script)}) ${script}`, description: 'package.json script', picked: true, script })),
+				{
+					canPickMany: true,
+					title: `Custom actions for ${workspace.name}`,
+					placeHolder: 'Create buttons for these package.json scripts (uncheck all to start empty)',
+				},
+			);
+			if (!picked) {
+				return undefined;
+			}
+			initial = await actionsFromScripts(folder, picked.map(p => p.script));
+		}
+		if (!initial.length) {
+			initial = [{ label: 'Example', icon: 'play', command: 'echo "Edit me in this file"' }];
+		}
+		return initial;
+	}
+
+	async function openActionsFile(file: vscode.Uri, workspaceName: string): Promise<void> {
+		const doc = await vscode.workspace.openTextDocument(file);
+		await vscode.window.showTextDocument(doc, { preview: false });
+		vscode.window.setStatusBarMessage(`Work Universe: editing actions of "${workspaceName}". Save to update the buttons.`, 6000);
+	}
+
 	register('workUniverse.setCustomActions', async (arg?: Node | string | { workspaceId?: string }) => {
 		const found = await resolveWorkspaceOrActive(arg);
 		if (!found) {
 			return;
 		}
 		const { workspace } = found;
-		if (!(await actions.exists(workspace.id))) {
-			const folder = vscode.Uri.parse(workspace.uri);
-			const allScripts = Object.keys(await readScripts(folder));
-			// Names that could smuggle a second command into the shell are not offered.
-			const scripts = allScripts.filter(isSafeScriptName);
-			if (scripts.length < allScripts.length) {
-				vscode.window.showWarningMessage(
-					`Work Universe: ${allScripts.length - scripts.length} package.json script(s) were skipped because their names contain unusual characters.`,
-				);
+		const { source, ignoredProjectFile } = await actions.sourceOf(workspace);
+		// A project file replaces the stored actions, so that is the one to edit.
+		if (source === 'project' || ignoredProjectFile) {
+			if (ignoredProjectFile) {
+				vscode.window.showWarningMessage(`Work Universe: ${PROJECT_ACTIONS_FILE} is ignored until you trust this window.`);
 			}
-			let initial: CustomAction[] = [];
-			if (scripts.length) {
-				type Item = vscode.QuickPickItem & { script: string };
-				const picked = await vscode.window.showQuickPick<Item>(
-					scripts.map(script => ({ label: `$(${guessIcon(script)}) ${script}`, description: 'package.json script', picked: true, script })),
-					{
-						canPickMany: true,
-						title: `Custom actions for ${workspace.name}`,
-						placeHolder: 'Create buttons for these package.json scripts (uncheck all to start empty)',
-					},
-				);
-				if (!picked) {
-					return;
-				}
-				initial = await actionsFromScripts(folder, picked.map(p => p.script));
-			}
-			if (!initial.length) {
-				initial = [{ label: 'Example', icon: 'play', command: 'echo "Edit me in this file"' }];
-			}
-			await actions.write(workspace.id, workspace.name, initial);
+			await openActionsFile(actions.projectFileFor(workspace), workspace.name);
+			return;
 		}
-		const doc = await vscode.workspace.openTextDocument(actions.fileFor(workspace.id));
-		await vscode.window.showTextDocument(doc, { preview: false });
-		vscode.window.setStatusBarMessage(`Work Universe: editing actions of "${workspace.name}". Save to update the buttons.`, 6000);
+		if (!(await actions.exists(workspace))) {
+			const initial = await initialActions(workspace);
+			if (!initial) {
+				return;
+			}
+			await actions.write(workspace, workspace.name, initial);
+		}
+		await openActionsFile(actions.fileFor(workspace), workspace.name);
+	});
+
+	register('workUniverse.createProjectActionsFile', async (arg?: Node | string | { workspaceId?: string }) => {
+		const found = await resolveWorkspaceOrActive(arg);
+		if (!found) {
+			return;
+		}
+		const { workspace } = found;
+		const projectFile = actions.projectFileFor(workspace);
+		try {
+			await vscode.workspace.fs.stat(projectFile);
+			await openActionsFile(projectFile, workspace.name);
+			return;
+		} catch {
+			// not there yet
+		}
+		// Starts from the actions you already have, so moving them into the project changes nothing.
+		const initial = (await actions.exists(workspace)) ? (await actions.get(workspace)).actions : await initialActions(workspace);
+		if (!initial) {
+			return;
+		}
+		await actions.write(workspace, workspace.name, initial, true);
+		await openActionsFile(projectFile, workspace.name);
+		vscode.window.showInformationMessage(
+			`Work Universe: "${workspace.name}" now uses ${PROJECT_ACTIONS_FILE}. Commit it to share the actions; delete it to go back to your own.`,
+		);
 	});
 
 	register('workUniverse.removeAllActions', async (arg?: Node | string | { workspaceId?: string }) => {
@@ -459,8 +507,19 @@ export function registerCommands(
 			return;
 		}
 		const { workspace } = found;
-		const count = (await actions.get(workspace.id)).actions.length;
-		if (!(await actions.exists(workspace.id))) {
+		const current = await actions.get(workspace);
+		if (current.source === 'project') {
+			const choice = await vscode.window.showInformationMessage(
+				`Work Universe: the actions of "${workspace.name}" come from ${PROJECT_ACTIONS_FILE} in the project. Edit or delete that file to change them.`,
+				'Open File',
+			);
+			if (choice) {
+				await openActionsFile(current.file, workspace.name);
+			}
+			return;
+		}
+		const count = current.actions.length;
+		if (!(await actions.exists(workspace))) {
 			vscode.window.showInformationMessage(`Work Universe: "${workspace.name}" has no custom actions.`);
 			return;
 		}
@@ -473,13 +532,13 @@ export function registerCommands(
 			return;
 		}
 		// Close the actions file if it's open, so it doesn't linger as a deleted file.
-		const file = actions.fileFor(workspace.id);
+		const file = actions.fileFor(workspace);
 		const openTabs = vscode.window.tabGroups.all
 			.flatMap(g => g.tabs)
 			.filter(t => t.input instanceof vscode.TabInputText && sameUri(t.input.uri, file));
 		if (openTabs.length) {
 			await vscode.window.tabGroups.close(openTabs, true);
 		}
-		await actions.delete(workspace.id);
+		await actions.delete(workspace);
 	});
 }

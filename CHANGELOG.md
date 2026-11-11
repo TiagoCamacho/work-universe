@@ -1,5 +1,10 @@
 # Change Log
 
+## Unreleased
+
+- **Custom actions are kept per folder**: removing a project or deleting a universe no longer deletes its custom actions. Adding the folder again brings them back, and a folder that is in two universes shares one set. Existing action files are moved to the new naming on the first start.
+- **Project actions file**: a project can bring its own actions in `.vscode/work-universe.json`. When it exists it replaces your stored actions for that folder (only in a trusted window). **Move Custom Actions to Project File** creates it from your current actions.
+
 ## 0.0.3
 
 - **Fix**: switching away from a workspace shown as a solution and back showed its plain folder structure instead of the solution.

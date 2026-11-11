@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { ActionRunner } from '../actions/actionRunner';
-import { ActionStore } from '../actions/actionStore';
+import { ActionStore, actionsKey } from '../actions/actionStore';
 import { CustomAction } from '../actions/types';
 import { FileTargets } from '../fileCommands';
 import { UniverseStore } from '../model/store';
@@ -110,8 +110,9 @@ export class UniversePanel implements vscode.WebviewViewProvider, FileTargets, v
 			}),
 			vscode.window.onDidChangeActiveTextEditor(e => this.reveal(e)),
 			actionRunner.onDidChangeRunning(() => void this.postState()),
-			actionStore.onDidChange(id => {
-				if (this.switcher.activeWorkspace()?.workspace.id === id) {
+			actionStore.onDidChange(key => {
+				const active = this.switcher.activeWorkspace()?.workspace;
+				if (active && actionsKey(active) === key) {
 					void this.postState();
 				}
 			}),
@@ -128,7 +129,7 @@ export class UniversePanel implements vscode.WebviewViewProvider, FileTargets, v
 	/** Reads every workspace's actions file ahead of time, so the first switch doesn't wait for it. */
 	private warmActions(): void {
 		for (const workspace of this.switcher.getWindowState().universe?.workspaces ?? []) {
-			void this.actionStore.get(workspace.id);
+			void this.actionStore.get(workspace);
 		}
 	}
 
@@ -248,7 +249,7 @@ export class UniversePanel implements vscode.WebviewViewProvider, FileTargets, v
 		}
 		const run = ++this.stateRun;
 		const single = this.switcher.activeWorkspace();
-		const file = single ? await this.actionStore.get(single.workspace.id) : await Promise.resolve({ actions: [], active_color: undefined });
+		const file = single ? await this.actionStore.get(single.workspace) : await Promise.resolve({ actions: [], active_color: undefined });
 		if (run !== this.stateRun || !this.view) {
 			return; // a newer request is on its way
 		}

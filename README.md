@@ -58,7 +58,17 @@ Each workspace can have its own row of icon buttons between the tabs and the fil
 - `active_color` (top level, `"#hex"` or `"none"`) colors the icons of actions that are currently running.
 - New action files start with a comment that documents every property. Colors get VS Code's color picker.
 - Action files live in the extension's storage. Nothing is written into your project.
+- Actions belong to the folder, not the universe: removing a project or deleting a universe keeps them, adding the folder again brings them back, and a folder in two universes shares one set. **Remove All Actions** deletes them.
 - An action runs whatever command you give it, with your permissions. Treat an actions file like a script.
+
+### Sharing actions with the project: `.vscode/work-universe.json`
+
+A project can bring its own actions in `.vscode/work-universe.json` (same format as above). When that file exists, it **replaces** your stored actions for that folder completely; nothing is merged. Delete the file and your own actions come back.
+
+- **Move Custom Actions to Project File** (in the `…` menu or by right-clicking the action row) creates the file from your current actions and opens it. Commit it to share the buttons with your team.
+- **Set Custom Actions…** opens the project file when there is one. **Remove All Actions** never deletes it.
+- The file is only used when you trust the window (Workspace Trust), because whoever wrote it decides what the buttons run. Until then your stored actions are shown.
+
 
 ## How it works
 
@@ -75,7 +85,7 @@ Opening a universe from a normal window reloads the window **once**. Every switc
 
 ## Known limitations
 
-- **Terminals and debug sessions are shared** across workspaces. VS Code has no API to hide terminals per workspace.
+- **Terminals and debug sessions are shared** across workspaces. VS Code has no API to hide terminals per workspace, so every terminal stays in the list. [Project terminals](#project-terminals) bring the right one to the front on switch.
 - Extensions that treat `workspaceFolders[0]` as "the project" will see the anchor folder.
 - Renaming the universe open in the current window updates the explorer header the next time the universe is opened.
 - Explorer expand/collapse state per workspace is up to VS Code.

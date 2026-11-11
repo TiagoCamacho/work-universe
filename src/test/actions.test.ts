@@ -4,7 +4,16 @@ import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { ActionRunner } from '../actions/actionRunner';
-import { ActionStore, actionsFileTemplate, validateActions } from '../actions/actionStore';
+import {
+	ACTIONS_FILE_SUFFIX,
+	ActionStore,
+	actionsFileTemplate,
+	actionsKey,
+	folderOfProjectFile,
+	PROJECT_ACTIONS_FILE,
+	validateActions,
+} from '../actions/actionStore';
+import { sameUri } from '../universe/paths';
 import { actionsFromScripts, detectPackageManager, guessIcon, readScripts } from '../actions/scripts';
 import { Workspace } from '../model/types';
 import { parseJsonc } from '../ui/util';
@@ -196,15 +205,86 @@ suite('custom actions: store', () => {
 		const root = vscode.Uri.file(fs.mkdtempSync(path.join(os.tmpdir(), 'wu-store-')));
 		const store = new ActionStore(root);
 		const changed: string[] = [];
-		store.onDidChange(id => changed.push(id));
+		store.onDidChange(key => changed.push(key));
+		const w1 = { id: 'w1', uri: vscode.Uri.file(path.join(os.tmpdir(), 'wu-api')).toString() };
 		try {
-			await store.write('w1', 'api', [{ label: 'dev', icon: 'play', command: 'npm run dev' }]);
-			assert.strictEqual((await store.get('w1')).actions.length, 1);
+			await store.write(w1, 'api', [{ label: 'dev', icon: 'play', command: 'npm run dev' }]);
+			assert.strictEqual((await store.get(w1)).actions.length, 1);
 
-			await store.delete('w1');
-			assert.strictEqual(await store.exists('w1'), false, 'file removed');
-			assert.deepStrictEqual((await store.get('w1')).actions, [], 'no buttons left');
-			assert.ok(changed.filter(id => id === 'w1').length >= 2, 'write and delete both notify the panel');
+			await store.delete(w1);
+			assert.strictEqual(await store.exists(w1), false, 'file removed');
+			assert.deepStrictEqual((await store.get(w1)).actions, [], 'no buttons left');
+			assert.ok(changed.filter(key => key === actionsKey(w1)).length >= 2, 'write and delete both notify the panel');
+		} finally {
+			store.dispose();
+		}
+	});
+
+	test('actions belong to the folder: a re-added folder (new id) gets them back', async () => {
+		const root = vscode.Uri.file(fs.mkdtempSync(path.join(os.tmpdir(), 'wu-store-')));
+		const store = new ActionStore(root);
+		const folder = vscode.Uri.file(path.join(os.tmpdir(), 'wu-web'));
+		try {
+			const original = { id: 'old', uri: folder.toString() };
+			await store.write(original, 'web', [{ label: 'dev', icon: 'play', command: 'npm run dev' }]);
+			const readded = { id: 'new', uri: folder.toString() };
+			assert.strictEqual((await store.get(readded)).actions.length, 1);
+			assert.strictEqual(await store.exists({ uri: vscode.Uri.file(path.join(os.tmpdir(), 'wu-other')).toString() }), false);
+		} finally {
+			store.dispose();
+		}
+	});
+
+	test('a project file .vscode/work-universe.json replaces the stored actions', async () => {
+		const root = vscode.Uri.file(fs.mkdtempSync(path.join(os.tmpdir(), 'wu-store-')));
+		const folder = vscode.Uri.file(fs.mkdtempSync(path.join(os.tmpdir(), 'wu-project-')));
+		const store = new ActionStore(root);
+		const workspace = { id: 'p1', uri: folder.toString() };
+		try {
+			await store.write(workspace, 'p', [{ label: 'mine', icon: 'play', command: 'echo mine' }]);
+			assert.strictEqual((await store.get(workspace)).source, 'stored');
+
+			const file = await store.write(workspace, 'p', [{ label: 'repo', icon: 'tools', command: 'echo repo' }, { label: 'two', icon: 'play', command: 'echo 2' }], true);
+			assert.ok(sameUri(file, vscode.Uri.joinPath(folder, PROJECT_ACTIONS_FILE)));
+			const fromProject = await store.get(workspace);
+			assert.strictEqual(fromProject.source, 'project');
+			assert.deepStrictEqual(fromProject.actions.map(a => a.label), ['repo', 'two'], 'nothing is merged in from the stored file');
+
+			await store.delete(workspace);
+			assert.ok(fs.existsSync(file.fsPath), 'removing the stored actions never deletes the project file');
+
+			fs.rmSync(file.fsPath);
+			store['invalidate'](actionsKey(workspace)); // the watcher may not have fired yet
+			const back = await store.get(workspace);
+			assert.strictEqual(back.source, 'stored');
+			assert.deepStrictEqual(back.actions, [], 'the stored actions were removed above');
+		} finally {
+			store.dispose();
+		}
+	});
+
+	test('the project folder of a project actions file', () => {
+		const folder = vscode.Uri.file(path.join(os.tmpdir(), 'wu-proj'));
+		assert.ok(sameUri(folderOfProjectFile(vscode.Uri.joinPath(folder, '.vscode', 'work-universe.json'))!, folder));
+		assert.strictEqual(folderOfProjectFile(vscode.Uri.joinPath(folder, 'work-universe.json')), undefined);
+		assert.strictEqual(folderOfProjectFile(vscode.Uri.joinPath(folder, '.vscode', 'settings.json')), undefined);
+	});
+
+	test('files named after the workspace id (up to 0.0.5) are moved to the folder key', async () => {
+		const root = vscode.Uri.file(fs.mkdtempSync(path.join(os.tmpdir(), 'wu-store-')));
+		const store = new ActionStore(root);
+		const workspace = { id: 'legacy1', uri: vscode.Uri.file(path.join(os.tmpdir(), 'wu-legacy')).toString() };
+		try {
+			await vscode.workspace.fs.createDirectory(store.dir);
+			const legacy = vscode.Uri.joinPath(store.dir, 'legacy1' + ACTIONS_FILE_SUFFIX);
+			await vscode.workspace.fs.writeFile(legacy, new TextEncoder().encode(actionsFileTemplate('legacy', [{ label: 'build', icon: 'tools', command: 'npm run build' }])));
+
+			await store.migrate([workspace, { id: '../evil', uri: workspace.uri }]);
+			assert.strictEqual((await store.get(workspace)).actions[0]?.label, 'build');
+			assert.strictEqual(fs.existsSync(legacy.fsPath), false, 'old file renamed, not copied');
+
+			await store.migrate([workspace]); // running again is harmless
+			assert.strictEqual((await store.get(workspace)).actions.length, 1);
 		} finally {
 			store.dispose();
 		}

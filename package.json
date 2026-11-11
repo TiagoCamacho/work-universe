@@ -17,7 +17,8 @@
     "Other"
   ],
   "activationEvents": [
-    "onStartupFinished"
+    "onStartupFinished",
+    "onTerminalProfile:workUniverse.projectTerminal"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -204,6 +205,12 @@
         "icon": "$(gear)"
       },
       {
+        "command": "workUniverse.createProjectActionsFile",
+        "title": "Move Custom Actions to Project File (.vscode/work-universe.json)",
+        "category": "Work Universe",
+        "icon": "$(file-add)"
+      },
+      {
         "command": "workUniverse.showActionTerminal",
         "title": "Show Action Terminal",
         "category": "Work Universe"
@@ -235,6 +242,18 @@
       {
         "command": "workUniverse.solution.openFile",
         "title": "Open Project File",
+        "category": "Work Universe"
+      },
+      {
+        "command": "workUniverse.openProjectTerminal",
+        "title": "Open Project Terminal",
+        "category": "Work Universe",
+        "icon": "$(terminal)",
+        "enablement": "workUniverse.inUniverse"
+      },
+      {
+        "command": "workUniverse.projectTerminals.toggle",
+        "title": "Toggle Terminal (remember per project)",
         "category": "Work Universe"
       }
     ],
@@ -311,9 +330,19 @@
           "group": "1_switch@5"
         },
         {
+          "command": "workUniverse.createProjectActionsFile",
+          "when": "view == workUniverse.panel && workUniverse.inUniverse",
+          "group": "1_switch@6"
+        },
+        {
           "command": "workUniverse.setUniverseMode",
           "when": "view == workUniverse.panel && workUniverse.inUniverse",
           "group": "2_universe@5"
+        },
+        {
+          "command": "workUniverse.openProjectTerminal",
+          "when": "view == workUniverse.panel && workUniverse.inUniverse",
+          "group": "navigation@5"
         }
       ],
       "commandPalette": [
@@ -367,6 +396,14 @@
         },
         {
           "command": "workUniverse.solution.openFile",
+          "when": "false"
+        },
+        {
+          "command": "workUniverse.openProjectTerminal",
+          "when": "workUniverse.inUniverse"
+        },
+        {
+          "command": "workUniverse.projectTerminals.toggle",
           "when": "false"
         }
       ],
@@ -462,6 +499,11 @@
           "group": "1_edit@2"
         },
         {
+          "command": "workUniverse.createProjectActionsFile",
+          "when": "webviewId == 'workUniverse.panel' && webviewSection == 'action'",
+          "group": "1_edit@3"
+        },
+        {
           "command": "workUniverse.removeAllActions",
           "when": "webviewId == 'workUniverse.panel' && webviewSection == 'tab'",
           "group": "2_edit@5"
@@ -512,6 +554,44 @@
         "key": "ctrl+shift+f",
         "mac": "cmd+shift+f",
         "when": "workUniverse.together"
+      },
+      {
+        "command": "workUniverse.projectTerminals.toggle",
+        "key": "ctrl+`",
+        "when": "workUniverse.inUniverse && terminalViewShowing",
+        "args": {
+          "command": "workbench.action.terminal.toggleTerminal",
+          "hiding": true
+        }
+      },
+      {
+        "command": "workUniverse.projectTerminals.toggle",
+        "key": "ctrl+`",
+        "when": "workUniverse.inUniverse && !terminalViewShowing",
+        "args": {
+          "command": "workbench.action.terminal.toggleTerminal",
+          "hiding": false
+        }
+      },
+      {
+        "command": "workUniverse.projectTerminals.toggle",
+        "key": "ctrl+j",
+        "mac": "cmd+j",
+        "when": "workUniverse.inUniverse && panelVisible && terminalViewShowing",
+        "args": {
+          "command": "workbench.action.togglePanel",
+          "hiding": true
+        }
+      },
+      {
+        "command": "workUniverse.projectTerminals.toggle",
+        "key": "ctrl+j",
+        "mac": "cmd+j",
+        "when": "workUniverse.inUniverse && !panelVisible",
+        "args": {
+          "command": "workbench.action.togglePanel",
+          "hiding": false
+        }
       }
     ],
     "configuration": {
@@ -556,12 +636,35 @@
           "type": "string",
           "scope": "window",
           "description": "Display name used when a universe workspace file is opened on a machine that does not know it yet."
+        },
+        "workUniverse.projectTerminals.followSwitch": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "When you switch workspace, bring that project's terminal to the front of the Terminal panel (the one used last there, else the newest). A terminal belongs to a project when it was opened as a project terminal or started inside the project's folder. Terminals are never closed, so whatever runs in them keeps running."
+        },
+        "workUniverse.projectTerminals.autoOpen": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "When you switch to a workspace that has no terminal yet, open a project terminal for it. Requires `#workUniverse.projectTerminals.followSwitch#`."
+        },
+        "workUniverse.projectTerminals.hidePanelWhenNone": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "When you switch to a workspace that has no terminal while another project's terminal is in front, close the panel so that terminal isn't shown. Leaves the panel alone when it is closed already or shows a terminal that belongs to no project. Requires `#workUniverse.projectTerminals.followSwitch#`."
+        },
+        "workUniverse.projectTerminals.startupCommand": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Command run in every new project terminal, e.g. `claude --continue`. Leave empty for a plain shell. Not re-run in terminals VS Code restores after a reload."
         }
       }
     },
     "jsonValidation": [
       {
-        "fileMatch": "*.wu-actions.json",
+        "fileMatch": [
+          "*.wu-actions.json",
+          "**/.vscode/work-universe.json"
+        ],
         "url": "./dist/actions.schema.json"
       }
     ],
@@ -569,10 +672,20 @@
       {
         "id": "jsonc",
         "filenamePatterns": [
-          "*.wu-actions.json"
+          "*.wu-actions.json",
+          "**/.vscode/work-universe.json"
         ]
       }
-    ]
+    ],
+    "terminal": {
+      "profiles": [
+        {
+          "id": "workUniverse.projectTerminal",
+          "title": "Project Terminal (Work Universe)",
+          "icon": "terminal"
+        }
+      ]
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run package",

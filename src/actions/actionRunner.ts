@@ -211,7 +211,7 @@ export class ActionRunner implements vscode.Disposable {
 	}
 }
 
-function waitForShellIntegration(terminal: vscode.Terminal): Promise<vscode.TerminalShellIntegration | undefined> {
+export function waitForShellIntegration(terminal: vscode.Terminal): Promise<vscode.TerminalShellIntegration | undefined> {
 	return new Promise(resolve => {
 		const timer = setTimeout(() => {
 			listener.dispose();

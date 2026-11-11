@@ -52,7 +52,8 @@ suite('security', () => {
 		const files = new UniverseFiles(vscode.Uri.file('/storage'));
 		assert.throws(() => files.dir('../../Documents'), 'a traversal id never becomes a path');
 		const actions = new ActionStore(vscode.Uri.file('/storage'));
-		assert.throws(() => actions.fileFor('../../x'));
+		const file = actions.fileFor({ uri: vscode.Uri.file('/../../Documents').toString() });
+		assert.ok(file.path.startsWith(actions.dir.path + '/'), 'an actions file is always inside the actions folder');
 		actions.dispose();
 	});
 
