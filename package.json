@@ -1,10 +1,11 @@
 {
   "name": "work-universe",
   "displayName": "Work Universe",
-  "publisher": "tiago-camacho",
+  "publisher": "tiagocamacho",
   "icon": "media/icon.png",
   "description": "Group several project folders into one window and switch between them with tabs: files, search, editor tabs and custom action buttons follow the active project.",
   "version": "0.0.3",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/TiagoCamacho/work-universe.git"
