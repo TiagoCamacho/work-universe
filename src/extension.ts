@@ -5,6 +5,7 @@ import { registerCommands } from './commands';
 import { registerFileCommands } from './fileCommands';
 import { UniverseStore } from './model/store';
 import { initPerf, logError } from './perf';
+import { SolutionModel } from './solution/solutionModel';
 import { Switcher } from './universe/switcher';
 import { UniverseFiles } from './universe/workspaceFile';
 import { DecorationSource } from './ui/decorations';
@@ -29,13 +30,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<WorkUn
 	const decorations = new DecorationSource();
 	const actionStore = new ActionStore(context.globalStorageUri);
 	const actionRunner = new ActionRunner();
-	const panel = new UniversePanel(context.extensionUri, store, switcher, model, icons, decorations, actionStore, actionRunner);
+	const solutions = new SolutionModel(model);
+	const panel = new UniversePanel(context.extensionUri, store, switcher, model, icons, decorations, actionStore, actionRunner, solutions);
 	const statusBar = new UniverseStatusBar(store, switcher);
 
 	context.subscriptions.push(
 		store,
 		switcher,
 		model,
+		solutions,
 		icons,
 		decorations,
 		actionStore,
@@ -46,6 +49,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<WorkUn
 		vscode.commands.registerCommand('workUniverse.files.collapseAll', () => panel.collapseAll()),
 		vscode.commands.registerCommand('workUniverse.showActionTerminal', (key: string) => actionRunner.showTerminal(key)),
 		vscode.commands.registerCommand('workUniverse.files.refresh', () => model.changed()),
+		vscode.commands.registerCommand('workUniverse.solution.openFile', (arg?: unknown) => panel.openSolutionFile(arg)),
 		vscode.commands.registerCommand('workUniverse.openUniverse', async () => {
 			const universe = await pickUniverse(store, 'Open a universe in this window', switcher.currentUniverseId());
 			if (universe) {

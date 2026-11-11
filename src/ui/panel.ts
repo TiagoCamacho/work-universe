@@ -5,7 +5,8 @@ import { CustomAction } from '../actions/types';
 import { FileTargets } from '../fileCommands';
 import { UniverseStore } from '../model/store';
 import { Workspace } from '../model/types';
-import { markLate } from '../perf';
+import { logError, markLate } from '../perf';
+import { SolutionModel, SolutionRow, solutionRootKey } from '../solution/solutionModel';
 import { isInside, sameUri, uriKey } from '../universe/paths';
 import { Switcher } from '../universe/switcher';
 import { DecorationSource } from './decorations';
@@ -40,7 +41,7 @@ type Message =
 	| { type: 'reorder'; workspaceIds: string[] }
 	| { type: 'openUniverse'; universeId: string }
 	| { type: 'create' }
-	| { type: 'listMany'; items: { key: string; uri: string; root: string }[] }
+	| { type: 'listMany'; items: { key: string; uri: string; root: string; rootKey?: string }[] }
 	| { type: 'painted' }
 	| { type: 'mode' }
 	| { type: 'open'; uri: string; preview: boolean }
@@ -84,6 +85,7 @@ export class UniversePanel implements vscode.WebviewViewProvider, FileTargets, v
 		private readonly decorations: DecorationSource,
 		private readonly actionStore: ActionStore,
 		private readonly actionRunner: ActionRunner,
+		private readonly solutions: SolutionModel,
 	) {
 		const onState = () => {
 			this.syncRoots();
@@ -92,7 +94,11 @@ export class UniversePanel implements vscode.WebviewViewProvider, FileTargets, v
 		this.disposables.push(
 			store.onDidChange(onState),
 			switcher.onDidChangeState(onState),
-			model.onDidChange(keys => this.post({ type: 'refresh', keys })),
+			model.onDidChange(keys => {
+				solutions.filesChanged();
+				this.post({ type: 'refresh', keys });
+			}),
+			solutions.onDidChange(() => this.post({ type: 'refresh' })),
 			decorations.onDidChange(() => this.postDecorations()),
 			icons.onDidChange(() => {
 				if (this.view) {
@@ -148,7 +154,7 @@ export class UniversePanel implements vscode.WebviewViewProvider, FileTargets, v
 			return undefined; // "…/../…" could climb out of the workspace
 		}
 		const workspaces = this.switcher.getWindowState().universe?.workspaces ?? [];
-		return workspaces.some(w => isInside(uri, w.uri)) ? uri : undefined;
+		return workspaces.some(w => isInside(uri, w.uri)) || this.solutions.isAllowed(uri) ? uri : undefined;
 	}
 
 	fromArg(arg: unknown): FileTarget | undefined {
@@ -210,11 +216,25 @@ export class UniversePanel implements vscode.WebviewViewProvider, FileTargets, v
 
 	private syncRoots(): void {
 		const state = this.switcher.getWindowState();
-		const roots = (state.universe?.workspaces ?? [])
-			.filter(w => state.activeIds.includes(w.id))
-			.map(w => vscode.Uri.parse(w.uri));
+		const active = (state.universe?.workspaces ?? []).filter(w => state.activeIds.includes(w.id));
+		const roots = active.map(w => vscode.Uri.parse(w.uri));
 		if (this.model.setRoots(roots)) {
 			this.selection = [];
+		}
+		const solutionOf = (w: Workspace) => ({ sln: vscode.Uri.parse(w.solution!), folder: vscode.Uri.parse(w.uri) });
+		// Every solution of the universe is known (a tab click asks for its tree before the switch);
+		// only the ones on screen are watched.
+		this.solutions.track(
+			active.filter(w => w.solution).map(solutionOf),
+			(state.universe?.workspaces ?? []).filter(w => w.solution).map(solutionOf),
+		);
+	}
+
+	/** "Open Project File" / "Open Solution File" from the context menu of the solution tree. */
+	async openSolutionFile(arg: unknown): Promise<void> {
+		const uri = this.safeUri((arg as { file?: unknown } | undefined)?.file);
+		if (uri) {
+			await vscode.commands.executeCommand('vscode.open', uri, { preview: false });
 		}
 	}
 
@@ -241,7 +261,8 @@ export class UniversePanel implements vscode.WebviewViewProvider, FileTargets, v
 		const rootOf = (w: Workspace) => {
 			const uri = vscode.Uri.parse(w.uri);
 			return {
-				key: uriKey(uri),
+				// A workspace shown as a solution has its own tree, so it gets its own root key.
+				key: w.solution ? solutionRootKey(w.solution) : uriKey(uri),
 				uri: uri.toString(),
 				name: w.name,
 				icon: this.icons.folderIcon(w.name, false, true),
@@ -355,6 +376,16 @@ export class UniversePanel implements vscode.WebviewViewProvider, FileTargets, v
 		};
 	}
 
+	private solutionRow(r: SolutionRow) {
+		const themed = !r.ci;
+		return {
+			...r,
+			icon: !themed ? undefined : r.iconOf ? this.icons.fileIcon(r.iconOf) : r.dir ? this.icons.folderIcon(r.name, false) : this.icons.fileIcon(r.name),
+			iconOpen: themed && r.dir && !r.iconOf ? this.icons.folderIcon(r.name, true) : undefined,
+			iconOf: undefined,
+		};
+	}
+
 	private async onMessage(msg: Message): Promise<void> {
 		const state = this.switcher.getWindowState();
 		switch (msg.type) {
@@ -400,11 +431,27 @@ export class UniversePanel implements vscode.WebviewViewProvider, FileTargets, v
 				// Every requested folder is read in parallel and answered in one message.
 				// Folders outside the universe's workspaces are answered with an empty list.
 				const items = (Array.isArray(msg.items) ? msg.items : []).slice(0, 2000);
-				const dirs = items.map(i => ({ uri: this.safeUri(i?.uri), root: this.safeUri(i?.root) }));
 				const lists = await Promise.all(
-					dirs.map(d => (d.uri && d.root ? this.model.list(d.uri, d.root) : Promise.resolve([]))),
+					items.map(async i => {
+						// Nodes of a solution tree are answered by the solution model, from the nodes
+						// it handed out itself.
+						if (this.solutions.isRoot(i?.rootKey)) {
+							try {
+								return (await this.solutions.list(String(i.rootKey), String(i.key))).map(r => this.solutionRow(r));
+							} catch (err) {
+								logError('could not list solution node', err);
+								return [];
+							}
+						}
+						if (typeof i?.rootKey === 'string' && i.rootKey.endsWith('#sln')) {
+							return []; // a solution that is no longer part of the universe: never list it as a folder
+						}
+						const uri = this.safeUri(i?.uri);
+						const root = this.safeUri(i?.root);
+						return uri && root ? (await this.model.list(uri, root)).map(e => this.toRow(e)) : [];
+					}),
 				);
-				const payload = items.map((item, n) => ({ key: String(item?.key), rows: lists[n].map(e => this.toRow(e)) }));
+				const payload = items.map((item, n) => ({ key: String(item?.key), rows: lists[n] }));
 				this.ensureIcons(payload.flatMap(l => l.rows.flatMap(r => [r.icon, r.iconOpen])));
 				this.post({ type: 'childrenMany', lists: payload });
 				break;
@@ -483,7 +530,26 @@ export class UniversePanel implements vscode.WebviewViewProvider, FileTargets, v
 			return;
 		}
 		const uri = editor.document.uri;
-		const root = this.model.getRoots().find(r => isInside(uri, r));
+		const state = this.switcher.getWindowState();
+		const active = (state.universe?.workspaces ?? []).filter(w => state.activeIds.includes(w.id));
+		if (active.some(w => w.solution)) {
+			void this.solutions.revealChain(uri).then(
+				found => {
+					if (found) {
+						this.post({ type: 'reveal', key: found.key, rootKey: found.rootKey, chain: found.chain.map(key => ({ key })) });
+					} else {
+						this.revealInFolders(uri, active.filter(w => !w.solution).map(w => vscode.Uri.parse(w.uri)));
+					}
+				},
+				err => logError('could not reveal in solution', err),
+			);
+			return;
+		}
+		this.revealInFolders(uri, this.model.getRoots());
+	}
+
+	private revealInFolders(uri: vscode.Uri, roots: readonly vscode.Uri[]): void {
+		const root = roots.find(r => isInside(uri, r));
 		if (!root || sameUri(uri, root)) {
 			return;
 		}

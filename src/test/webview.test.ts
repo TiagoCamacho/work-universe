@@ -56,6 +56,7 @@ function createPanel() {
 		modeTitle: () => doc.querySelector('.tool.mode')?.getAttribute('title'),
 		clickMode: () => (doc.querySelector('.tool.mode') as HTMLElement).click(),
 		spacerHeight: () => (doc.querySelector('.vspace') as HTMLElement | null)?.style.height,
+		doc,
 		close: () => window.close(),
 	};
 }
@@ -182,6 +183,44 @@ suite('panel webview behaviour', () => {
 			panel.post({ type: 'refresh', keys: ['file:///w1', 'file:///elsewhere'] });
 			const refresh = panel.take('listMany');
 			assert.deepStrictEqual((refresh[0].items as { key: string }[]).map(i => i.key), ['file:///w1']);
+			assert.deepStrictEqual(panel.errors, []);
+		} finally {
+			panel.close();
+		}
+	});
+	test('solution view: virtual nodes, auto-expanded solution and nested files', () => {
+		const panel = createPanel();
+		try {
+			const root = { key: 'file:///w1/app.sln#sln', uri: 'file:///w1', name: 'w1' };
+			panel.post({ ...stateFor('w1'), roots: [root] });
+			const first = panel.take('listMany')[0].items as { key: string; rootKey: string }[];
+			assert.deepStrictEqual(first, [{ key: root.key, uri: 'file:///w1', root: 'file:///w1', rootKey: root.key }]);
+
+			const sol = { key: root.key + ':s', uri: 'file:///w1/app.sln', name: "Solution 'app' (1 of 1 project)", dir: true, virt: true, section: 'solution', open: true };
+			panel.post({ type: 'childrenMany', lists: [{ key: root.key, rows: [sol] }] });
+			const auto = panel.take('listMany');
+			assert.deepStrictEqual((auto[0].items as { key: string; rootKey: string }[]).map(i => [i.key, i.rootKey]), [[sol.key, root.key]], 'solution node expands by itself');
+
+			const project = { key: root.key + ':p:1', uri: 'file:///w1/App', name: 'App', dir: true, virt: true, section: 'project', drop: 'file:///w1/App' };
+			panel.post({ type: 'childrenMany', lists: [{ key: sol.key, rows: [project] }] });
+			panel.click('.row .label', 'App');
+			assert.deepStrictEqual(panel.take('select').pop()?.items, [], 'virtual nodes are never selected for file commands');
+			const settings = { ...file('file:///w1/App', 'appsettings.json'), nest: true, alias: 'file:///w1/app' };
+			panel.post({ type: 'childrenMany', lists: [{ key: project.key, rows: [settings] }] });
+			assert.deepStrictEqual(panel.rows(), [sol.name, 'App', 'appsettings.json']);
+
+			// A click on the name opens the file; a click on its arrow expands it.
+			panel.click('.row .label', 'appsettings.json');
+			assert.strictEqual(panel.take('open').length, 1);
+			const twistie = [...panel.doc.querySelectorAll('.row')].find(r => r.textContent === 'appsettings.json')!.querySelector('.twistie') as HTMLElement;
+			twistie.click();
+			assert.deepStrictEqual((panel.take('listMany')[0].items as { key: string }[]).map(i => i.key), [settings.key]);
+			panel.post({ type: 'childrenMany', lists: [{ key: settings.key, rows: [file('file:///w1/App', 'appsettings.Development.json')] }] });
+			assert.deepStrictEqual(panel.rows(), [sol.name, 'App', 'appsettings.json', 'appsettings.Development.json']);
+
+			// A file-watcher refresh of the project folder reaches the nested file through its alias.
+			panel.post({ type: 'refresh', keys: ['file:///w1/app'] });
+			assert.deepStrictEqual((panel.take('listMany')[0].items as { key: string }[]).map(i => i.key), [settings.key]);
 			assert.deepStrictEqual(panel.errors, []);
 		} finally {
 			panel.close();

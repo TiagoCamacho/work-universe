@@ -2,8 +2,9 @@
   "name": "work-universe",
   "displayName": "Work Universe",
   "publisher": "tiago-camacho",
+  "icon": "media/icon.png",
   "description": "Group several project folders into one window and switch between them with tabs: files, search, editor tabs and custom action buttons follow the active project.",
-  "version": "0.0.1",
+  "version": "0.0.3",
   "engines": {
     "vscode": "^1.145.0"
   },
@@ -219,6 +220,17 @@
         "title": "Search in Active Workspace",
         "category": "Work Universe",
         "icon": "$(search)"
+      },
+      {
+        "command": "workUniverse.setWorkspaceSolution",
+        "title": "Set Solution File...",
+        "category": "Work Universe",
+        "icon": "$(library)"
+      },
+      {
+        "command": "workUniverse.solution.openFile",
+        "title": "Open Project File",
+        "category": "Work Universe"
       }
     ],
     "menus": {
@@ -347,6 +359,10 @@
         {
           "command": "workUniverse.showActionTerminal",
           "when": "false"
+        },
+        {
+          "command": "workUniverse.solution.openFile",
+          "when": "false"
         }
       ],
       "webview/context": [
@@ -382,37 +398,37 @@
         },
         {
           "command": "workUniverse.files.newFile",
-          "when": "webviewId == 'workUniverse.panel' && webviewSection =~ /^(folder|root)$/",
+          "when": "webviewId == 'workUniverse.panel' && webviewSection =~ /^(folder|root|project)$/",
           "group": "2_new@1"
         },
         {
           "command": "workUniverse.files.newFolder",
-          "when": "webviewId == 'workUniverse.panel' && webviewSection =~ /^(folder|root)$/",
+          "when": "webviewId == 'workUniverse.panel' && webviewSection =~ /^(folder|root|project)$/",
           "group": "2_new@2"
         },
         {
           "command": "workUniverse.files.openInTerminal",
-          "when": "webviewId == 'workUniverse.panel' && webviewSection =~ /^(folder|root)$/",
+          "when": "webviewId == 'workUniverse.panel' && webviewSection =~ /^(folder|root|project)$/",
           "group": "3_term@1"
         },
         {
           "command": "workUniverse.files.findInFolder",
-          "when": "webviewId == 'workUniverse.panel' && webviewSection =~ /^(folder|root)$/",
+          "when": "webviewId == 'workUniverse.panel' && webviewSection =~ /^(folder|root|project)$/",
           "group": "4_search@1"
         },
         {
           "command": "workUniverse.files.revealInOS",
-          "when": "webviewId == 'workUniverse.panel' && webviewSection =~ /^(file|folder|root)$/",
+          "when": "webviewId == 'workUniverse.panel' && webviewSection =~ /^(file|folder|root|project|solution)$/",
           "group": "5_reveal@1"
         },
         {
           "command": "workUniverse.files.copyPath",
-          "when": "webviewId == 'workUniverse.panel' && webviewSection =~ /^(file|folder|root)$/",
+          "when": "webviewId == 'workUniverse.panel' && webviewSection =~ /^(file|folder|root|project|solution)$/",
           "group": "6_copy@1"
         },
         {
           "command": "workUniverse.files.copyRelativePath",
-          "when": "webviewId == 'workUniverse.panel' && webviewSection =~ /^(file|folder|root)$/",
+          "when": "webviewId == 'workUniverse.panel' && webviewSection =~ /^(file|folder|root|project|solution)$/",
           "group": "6_copy@2"
         },
         {
@@ -444,6 +460,21 @@
           "command": "workUniverse.removeAllActions",
           "when": "webviewId == 'workUniverse.panel' && webviewSection == 'tab'",
           "group": "2_edit@5"
+        },
+        {
+          "command": "workUniverse.solution.openFile",
+          "when": "webviewId == 'workUniverse.panel' && webviewSection =~ /^(project|solution)$/",
+          "group": "1_open@1"
+        },
+        {
+          "command": "workUniverse.setWorkspaceSolution",
+          "when": "webviewId == 'workUniverse.panel' && webviewSection == 'tab'",
+          "group": "2_edit@6"
+        },
+        {
+          "command": "workUniverse.setWorkspaceSolution",
+          "when": "webviewId == 'workUniverse.panel' && webviewSection == 'solution'",
+          "group": "9_view@1"
         }
       ]
     },

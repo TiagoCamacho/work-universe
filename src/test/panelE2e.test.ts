@@ -9,6 +9,7 @@ import { ActionStore } from '../actions/actionStore';
 import { UniverseStore } from '../model/store';
 import { Universe } from '../model/types';
 import { lastTimings } from '../perf';
+import { SolutionModel } from '../solution/solutionModel';
 import { DecorationSource } from '../ui/decorations';
 import { FileModel } from '../ui/fileModel';
 import { IconThemeResolver } from '../ui/iconTheme';
@@ -72,8 +73,9 @@ const root = process.env.WORK_UNIVERSE_TEST_ROOT;
 		const decorations = new DecorationSource();
 		const actionStore = new ActionStore(vscode.Uri.file(fs.mkdtempSync(path.join(os.tmpdir(), 'wu-e2e-'))));
 		const actionRunner = new ActionRunner();
-		const panel = new UniversePanel(vscode.Uri.file('/ext'), store, switcher, model, icons, decorations, actionStore, actionRunner);
-		disposables.push(store, switcher, model, icons, decorations, actionStore, actionRunner, panel);
+		const solutions = new SolutionModel(model);
+		const panel = new UniversePanel(vscode.Uri.file('/ext'), store, switcher, model, icons, decorations, actionStore, actionRunner, solutions);
+		disposables.push(store, switcher, model, solutions, icons, decorations, actionStore, actionRunner, panel);
 
 		// A stand-in for VS Code's WebviewView: it hands messages to jsdom and back.
 		const toHost: ((m: unknown) => void)[] = [];

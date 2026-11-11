@@ -92,7 +92,7 @@ export class UniverseStore implements vscode.Disposable {
 		}
 	}
 
-	async addWorkspaces(universeId: string, folders: { uri: vscode.Uri; name: string }[]): Promise<Workspace[]> {
+	async addWorkspaces(universeId: string, folders: { uri: vscode.Uri; name: string; solution?: vscode.Uri }[]): Promise<Workspace[]> {
 		const added: Workspace[] = [];
 		await this.updateUniverse(universeId, u => {
 			for (const folder of folders) {
@@ -101,6 +101,9 @@ export class UniverseStore implements vscode.Disposable {
 					continue;
 				}
 				const ws: Workspace = { id: newId(), name: folder.name, uri };
+				if (folder.solution) {
+					ws.solution = folder.solution.toString();
+				}
 				u.workspaces.push(ws);
 				added.push(ws);
 			}

@@ -66,40 +66,9 @@ VS Code restarts **every** extension when the *first* workspace folder changes. 
 
 Opening a universe from a normal window reloads the window **once**. Every switch after that is instant.
 
-## Settings
-
-| Setting | Default | |
-|---|---|---|
-| `workUniverse.dirtyFiles` | `prompt` | What happens to unsaved files when you switch: `prompt`, `save` or `keepOpen`. |
-| `workUniverse.applyColors` | `true` | Tint the title bar, activity bar and status bar with the workspace color. |
-| `workUniverse.autoReveal` | `true` | Select the file you are editing in the panel's file tree. |
-| `workUniverse.showExcludedFiles` | `false` | Show files that `files.exclude` hides in the panel's file tree. |
-
-## Performance
-
-Switching is built so that what you see changes first:
-
-- Clicking a tab updates the panel in the same instant. A workspace you've already visited shows its whole tree from memory and refreshes it in the background.
-- The new workspace's active editor opens first (one per side with split editors), and the old tabs close after it.
-- VS Code's own folder change (search, source control, language servers) runs alongside, not before.
-- The remaining tabs are added in the background.
-- Clicking several tabs quickly skips the ones in between.
-- The file tree only draws the rows in view, so very large folders stay fast.
-
-Timings of every switch are written to the **Work Universe** output channel (`View → Output`), e.g. `switch → backend: state=0.4ms firstEditor=70ms folders=180ms tabs=250ms total=330ms`.
-
 ## Known limitations
 
 - **Terminals and debug sessions are shared** across workspaces. VS Code has no API to hide terminals per workspace.
 - Extensions that treat `workspaceFolders[0]` as "the project" will see the anchor folder.
 - Renaming the universe open in the current window updates the explorer header the next time the universe is opened.
 - Explorer expand/collapse state per workspace is up to VS Code.
-
-## Development
-
-```
-npm install
-npm test           # unit + integration tests (runs inside a generated universe window)
-```
-
-Press **F5** with **Run Extension (Universe)** selected. It generates a sample universe in `.dev/` (backend + frontend) and starts the Extension Development Host already inside it. Don't use *File → Open Folder* in the Development Host: switching the window to another folder ends the debug session and closes the window. Add folders with the `+` tab instead.

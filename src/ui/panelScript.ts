@@ -28,7 +28,10 @@ export const PANEL_SCRIPT = String.raw`
 	let state = null;
 
 	// ---- tree of the workspace on screen (identified by currentKey) ----
-	/** key -> { key, uri, name, dir, icon, iconOpen, parent, children: string[] | null, isRoot, root } */
+	/**
+	 * key -> { key, uri, name, dir, icon, iconOpen, parent, children: string[] | null, isRoot, root, rootKey }
+	 * plus, for the solution view, the optional fields in OPTIONAL (see solutionModel.ts).
+	 */
 	let nodes = new Map();
 	let roots = [];
 	let rootKeys = [];
@@ -219,9 +222,13 @@ export const PANEL_SCRIPT = String.raw`
 		const fresh = items.filter(i => i && i.uri && !requested.has(i.key));
 		if (!fresh.length) return;
 		for (const i of fresh) requested.add(i.key);
-		vscode.postMessage({ type: 'listMany', items: fresh.map(i => ({ key: i.key, uri: i.uri, root: i.root })) });
+		vscode.postMessage({ type: 'listMany', items: fresh.map(i => ({ key: i.key, uri: i.uri, root: i.root, rootKey: i.rootKey })) });
 	}
-	const itemOf = node => ({ key: node.key, uri: node.uri, root: node.root });
+	const itemOf = node => ({ key: node.key, uri: node.uri, root: node.root, rootKey: node.rootKey });
+	/** Folders, and files that have other files nested under them (solution view). */
+	const expandable = n => !!n && (n.dir || !!n.nest);
+	/** Row fields only some rows have; a refreshed row without them must lose them. */
+	const OPTIONAL = ['nest', 'virt', 'section', 'ci', 'fb', 'file', 'alias', 'drop', 'open', 'desc', 'tip', 'faded'];
 
 	function isReachable(node) {
 		let n = node;
@@ -233,7 +240,7 @@ export const PANEL_SCRIPT = String.raw`
 	function loadedFolders() {
 		const result = [];
 		for (const node of nodes.values()) {
-			if (node.dir && node.children !== null && expanded.has(node.key) && isReachable(node)) result.push(node);
+			if (expandable(node) && node.children !== null && expanded.has(node.key) && isReachable(node)) result.push(node);
 		}
 		return result;
 	}
@@ -290,7 +297,7 @@ export const PANEL_SCRIPT = String.raw`
 		decorations = {};
 		rememberedUri = new Map();
 		for (const r of newRoots) {
-			nodes.set(r.key, { key: r.key, uri: r.uri, name: r.name, dir: true, icon: r.icon, iconOpen: r.iconOpen, parent: null, children: null, isRoot: true, root: r.uri });
+			nodes.set(r.key, { key: r.key, uri: r.uri, name: r.name, dir: true, icon: r.icon, iconOpen: r.iconOpen, parent: null, children: null, isRoot: true, root: r.uri, rootKey: r.key });
 		}
 		const remembered = saved.expanded[key];
 		expanded = new Set();
@@ -307,7 +314,7 @@ export const PANEL_SCRIPT = String.raw`
 		for (const [k, uri] of rememberedUri) {
 			if (nodes.has(k)) continue;
 			const root = newRoots.find(r => k.startsWith(r.key + '/'));
-			if (root) items.push({ key: k, uri, root: root.uri });
+			if (root) items.push({ key: k, uri, root: root.uri, rootKey: root.key });
 		}
 		requestMany(items);
 		rebuild();
@@ -323,8 +330,10 @@ export const PANEL_SCRIPT = String.raw`
 		if (!parent) return false;
 		parent.children = rows.map(r => {
 			const existing = nodes.get(r.key);
-			const node = Object.assign(existing || { children: null }, r, { parent: key, isRoot: false, root: parent.root });
-			if (!existing || existing.dir !== r.dir) node.children = null;
+			if (existing) for (const f of OPTIONAL) if (!(f in r)) delete existing[f];
+			const node = Object.assign(existing || { children: null }, r, { parent: key, isRoot: false, root: parent.root, rootKey: parent.rootKey });
+			if (!existing || existing.dir !== r.dir || !expandable(node)) node.children = null;
+			if (!existing && r.open) expanded.add(r.key);
 			nodes.set(r.key, node);
 			return r.key;
 		});
@@ -345,7 +354,7 @@ export const PANEL_SCRIPT = String.raw`
 		// Expanded folders that became visible but aren't loaded yet (older saved state, reveal).
 		const missing = [];
 		for (const node of nodes.values()) {
-			if (node.dir && node.children === null && expanded.has(node.key) && isReachable(node)) missing.push(itemOf(node));
+			if (expandable(node) && node.children === null && expanded.has(node.key) && isReachable(node)) missing.push(itemOf(node));
 		}
 		requestMany(missing);
 		rebuild();
@@ -356,13 +365,13 @@ export const PANEL_SCRIPT = String.raw`
 	/** Re-reads folders after files were created or deleted: only the given ones, or all on screen. */
 	function refresh(keys) {
 		let targets = loadedFolders();
-		if (keys) { const wanted = new Set(keys); targets = targets.filter(n => wanted.has(n.key)); }
+		if (keys) { const wanted = new Set(keys); targets = targets.filter(n => wanted.has(n.key) || (n.alias && wanted.has(n.alias))); }
 		for (const n of targets) requested.delete(n.key);
 		requestMany(targets.map(itemOf));
 	}
 
 	function toggle(node, open) {
-		if (!node || !node.dir) return;
+		if (!expandable(node)) return;
 		const willOpen = open === undefined ? !expanded.has(node.key) : open;
 		if (willOpen) { expanded.add(node.key); if (node.children === null) requestMany([itemOf(node)]); }
 		else expanded.delete(node.key);
@@ -388,7 +397,7 @@ export const PANEL_SCRIPT = String.raw`
 				if (!n) continue;
 				indexOf.set(k, visible.length);
 				visible.push({ node: n, depth });
-				if (n.dir && expanded.has(k) && n.children) walk(n.children, depth + 1);
+				if (expandable(n) && expanded.has(k) && n.children) walk(n.children, depth + 1);
 			}
 		};
 		if (single()) {
@@ -445,34 +454,38 @@ export const PANEL_SCRIPT = String.raw`
 	}
 
 	function renderRow(node, depth) {
-		const isOpen = node.dir && expanded.has(node.key);
+		const canOpen = expandable(node);
+		const isOpen = canOpen && expanded.has(node.key);
 		const deco = decorations[node.key];
 		const iconClass = node.dir ? (isOpen ? node.iconOpen || node.icon : node.icon) : node.icon;
 		let icon;
-		if (state.hasIconTheme) {
+		if (node.ci) {
+			icon = el('span', { class: 'ic', 'aria-hidden': 'true' }, codicon(node.ci));
+		} else if (state.hasIconTheme && (iconClass || !node.fb)) {
 			icon = el('span', { class: 'ic ' + (iconClass || 'none'), 'aria-hidden': 'true' });
 		} else {
-			icon = el('span', { class: 'ic', 'aria-hidden': 'true' }, codicon(node.isRoot ? 'root-folder' : node.dir ? (isOpen ? 'folder-opened' : 'folder') : 'file'));
+			icon = el('span', { class: 'ic', 'aria-hidden': 'true' }, codicon(node.fb || (node.isRoot ? 'root-folder' : node.dir ? (isOpen ? 'folder-opened' : 'folder') : 'file')));
 		}
-		const showTwistie = node.dir && !state.hidesArrows;
+		// Nested files always get an arrow: without it nothing shows that they can be expanded.
+		const showTwistie = canOpen && (!state.hidesArrows || !node.dir || node.virt);
 		const row = el('div', {
-			class: 'row' + (selected.has(node.key) ? ' selected' : '') + (focusKey === node.key ? ' focused' : '') + (deco && deco.faded ? ' faded' : ''),
+			class: 'row' + (selected.has(node.key) ? ' selected' : '') + (focusKey === node.key ? ' focused' : '') + ((deco && deco.faded) || node.faded ? ' faded' : ''),
 			role: 'treeitem',
 			'aria-level': String(depth + 1),
-			'aria-expanded': node.dir ? String(isOpen) : undefined,
+			'aria-expanded': canOpen ? String(isOpen) : undefined,
 			'aria-selected': String(selected.has(node.key)),
-			title: deco && deco.tooltip ? node.name + ' · ' + deco.tooltip : node.name,
-			draggable: node.isRoot ? undefined : 'true',
+			title: [node.name + (node.desc ? ' ' + node.desc : ''), node.tip, deco && deco.tooltip].filter(Boolean).join(' · '),
+			draggable: node.isRoot || node.virt ? undefined : 'true',
 			style: { 'padding-left': (depth * 8 + 4) + 'px' },
 			dataset: {
 				key: node.key,
-				vscodeContext: JSON.stringify({ webviewSection: node.isRoot ? 'root' : node.dir ? 'folder' : 'file', uri: node.uri, root: node.root, preventDefaultContextMenuItems: true }),
+				vscodeContext: JSON.stringify({ webviewSection: node.section || (node.isRoot ? 'root' : node.dir ? 'folder' : 'file'), uri: node.uri, root: node.root, file: node.file, preventDefaultContextMenuItems: true }),
 			},
 		});
 		for (let i = 0; i < depth; i++) row.append(el('span', { class: 'guide', style: { left: (i * 8 + 12) + 'px' } }));
 		row.append(el('span', { class: 'twistie' }, showTwistie ? codicon(isOpen ? 'chevron-down' : 'chevron-right') : null));
 		row.append(icon);
-		row.append(el('span', { class: 'label', style: deco && deco.color ? { color: deco.color } : {} }, node.name));
+		row.append(el('span', { class: 'label', style: deco && deco.color ? { color: deco.color } : {} }, node.desc ? [node.name, el('span', { class: 'desc' }, ' ' + node.desc)] : node.name));
 		if (deco && deco.badge) row.append(el('span', { class: 'badge', style: deco.color ? { color: deco.color } : {} }, deco.badge));
 		return row;
 	}
@@ -480,7 +493,7 @@ export const PANEL_SCRIPT = String.raw`
 	// ---------------------------------------------------------------- selection
 	const target = n => ({ uri: n.uri, root: n.root, dir: n.dir, isRoot: n.isRoot });
 	function postSelection() {
-		vscode.postMessage({ type: 'select', items: [...selected].map(k => nodes.get(k)).filter(Boolean).map(target) });
+		vscode.postMessage({ type: 'select', items: [...selected].map(k => nodes.get(k)).filter(n => n && !n.virt).map(target) });
 	}
 	function select(key, mode) {
 		if (mode === 'toggle') {
@@ -501,7 +514,7 @@ export const PANEL_SCRIPT = String.raw`
 		if (document.activeElement === treeEl) ensureVisible(key);
 	}
 	function open(node, preview) {
-		if (node && !node.dir) vscode.postMessage({ type: 'open', uri: node.uri, preview });
+		if (node && !node.dir && !node.virt) vscode.postMessage({ type: 'open', uri: node.uri, preview });
 	}
 	const rowNode = e => { const row = e.target.closest('.row'); return row ? nodes.get(row.dataset.key) : null; };
 
@@ -511,7 +524,8 @@ export const PANEL_SCRIPT = String.raw`
 		if (e.ctrlKey || e.metaKey) return select(node.key, 'toggle');
 		if (e.shiftKey) return select(node.key, 'range');
 		select(node.key);
-		if (node.dir) toggle(node);
+		// A file with nested files opens on a click on its name, and expands on a click on its arrow.
+		if (node.dir || (node.nest && e.target.closest('.twistie'))) toggle(node);
 		else open(node, true);
 	});
 	treeEl.addEventListener('dblclick', e => {
@@ -538,11 +552,11 @@ export const PANEL_SCRIPT = String.raw`
 			case 'PageUp': e.preventDefault(); move(i - page); break;
 			case 'ArrowRight':
 				e.preventDefault();
-				if (node && node.dir) { if (!expanded.has(node.key)) toggle(node, true); else if (node.children && node.children.length) select(node.children[0]); }
+				if (expandable(node)) { if (!expanded.has(node.key)) toggle(node, true); else if (node.children && node.children.length) select(node.children[0]); }
 				break;
 			case 'ArrowLeft':
 				e.preventDefault();
-				if (node && node.dir && expanded.has(node.key)) toggle(node, false);
+				if (expandable(node) && expanded.has(node.key)) toggle(node, false);
 				else if (node && node.parent && indexOf.has(node.parent)) select(node.parent);
 				break;
 			case 'Enter':
@@ -555,13 +569,13 @@ export const PANEL_SCRIPT = String.raw`
 				break;
 			case 'F2':
 				e.preventDefault();
-				if (node && !node.isRoot) vscode.postMessage({ type: 'command', id: 'workUniverse.files.rename', target: target(node) });
+				if (node && !node.isRoot && !node.virt) vscode.postMessage({ type: 'command', id: 'workUniverse.files.rename', target: target(node) });
 				break;
 			case 'Delete':
 			case 'Backspace':
 				if (e.key === 'Backspace' && !e.metaKey) break;
 				e.preventDefault();
-				if (node) vscode.postMessage({ type: 'command', id: 'workUniverse.files.delete' });
+				if (node && !node.virt) vscode.postMessage({ type: 'command', id: 'workUniverse.files.delete' });
 				break;
 			case 'Escape':
 				selected.clear(); postSelection(); paint(true); break;
@@ -573,16 +587,19 @@ export const PANEL_SCRIPT = String.raw`
 
 	// ---------------------------------------------------------------- drag & drop of files
 	const dropDirFor = node => {
-		if (!node) return nodes.get(rootKeys[0]);
-		return node.dir ? node : nodes.get(node.parent);
+		let n = node || nodes.get(rootKeys[0]);
+		if (n && !n.dir) n = nodes.get(n.parent);
+		// In the solution view, go up to a real folder or a node that has one (a project).
+		while (n && n.virt && !n.drop) n = nodes.get(n.parent);
+		return n;
 	};
 	let dropRow = null;
 	const clearDrop = () => { if (dropRow) dropRow.classList.remove('drop-target'); dropRow = null; };
 	treeEl.addEventListener('dragstart', e => {
 		const node = rowNode(e);
-		if (!node || node.isRoot) return;
+		if (!node || node.isRoot || node.virt) return;
 		const keys = selected.has(node.key) ? [...selected] : [node.key];
-		dragFiles = keys.map(k => nodes.get(k)).filter(n => n && !n.isRoot);
+		dragFiles = keys.map(k => nodes.get(k)).filter(n => n && !n.isRoot && !n.virt);
 		e.dataTransfer.effectAllowed = 'copyMove';
 		e.dataTransfer.setData('text/uri-list', dragFiles.map(n => n.uri).join('\r\n'));
 		e.dataTransfer.setData('text/plain', dragFiles.map(n => n.uri).join('\n'));
@@ -606,7 +623,7 @@ export const PANEL_SCRIPT = String.raw`
 		if (dir) {
 			expanded.add(dir.key);
 			saveExpanded();
-			vscode.postMessage({ type: 'move', sources: dragFiles.map(n => n.uri), target: dir.uri });
+			vscode.postMessage({ type: 'move', sources: dragFiles.map(n => n.uri), target: dir.drop || dir.uri });
 		}
 		dragFiles = null;
 	});

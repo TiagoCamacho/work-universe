@@ -1,5 +1,14 @@
 # Change Log
 
+## 0.0.3
+
+- **Fix**: switching away from a workspace shown as a solution and back showed its plain folder structure instead of the solution.
+
+## 0.0.2
+
+- **Solution view**: a workspace folder that contains a Visual Studio solution (`.sln` / `.slnx`) can be shown like Visual Studio's Solution Explorer: solution folders, projects, Dependencies / References and nested files (`Form1.Designer.cs` under `Form1.cs`, `appsettings.Development.json` under `appsettings.json`, …). You're asked when adding the folder, or use **Set Solution File...** on the tab. Projects that can't be loaded show why on hover.
+- **Switching keeps shared folders loaded**: folders that are loaded before and after a switch are no longer removed and re-added, so language servers such as C# Dev Kit don't reload their projects.
+
 ## 0.0.1
 
 Initial release.

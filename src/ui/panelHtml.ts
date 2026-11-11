@@ -61,13 +61,15 @@ export function panelHtml(webview: vscode.Webview, codiconCss: vscode.Uri): stri
 	.tree:focus .row.focused { outline: 1px solid var(--vscode-list-focusOutline, var(--accent)); outline-offset: -1px; }
 	.row.drop-target { background: var(--vscode-list-dropBackground); }
 	.row.faded .label { opacity: .6; }
-	.guide { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--vscode-tree-inactiveIndentGuidesStroke, rgba(128,128,128,.25)); }
-	.tree:hover .guide { background: var(--vscode-tree-indentGuidesStroke, rgba(128,128,128,.5)); }
+	/* Indent guides are hidden until the pointer is over the tree (or it has keyboard focus), then fade in softly. */
+	.guide { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--vscode-tree-inactiveIndentGuidesStroke, rgba(128,128,128,.25)); opacity: 0; transition: opacity .15s ease-out; }
+	.tree:hover .guide, .tree:focus-within .guide { opacity: 1; }
 	.twistie { flex: none; width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center; font-size: 16px; color: var(--vscode-icon-foreground, inherit); }
 	.ic { flex: none; width: 16px; height: var(--row); margin-right: 6px; display: inline-flex; align-items: center; justify-content: center; background-size: 16px 16px; background-repeat: no-repeat; background-position: center; -webkit-font-smoothing: antialiased; }
 	.ic::before { line-height: 1; }
 	.ic.none { width: 0; margin-right: 2px; }
 	.label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+	.label .desc { color: var(--vscode-descriptionForeground); }
 	.badge { flex: none; margin-left: 6px; font-size: 0.9em; opacity: .95; }
 	/* Only the rows in view exist in the DOM: .vspace has the full height, .vrows is shifted into place. */
 	.vspace { position: relative; }

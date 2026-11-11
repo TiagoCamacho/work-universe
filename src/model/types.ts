@@ -7,6 +7,11 @@ export interface Workspace {
 	icon?: string;
 	/** Hex color, e.g. `#1e6fd9`. */
 	color?: string;
+	/**
+	 * Visual Studio solution (.sln / .slnx) inside the folder, serialized with `Uri.toString()`.
+	 * When set, the panel shows the workspace like Visual Studio's Solution Explorer.
+	 */
+	solution?: string;
 }
 
 /**

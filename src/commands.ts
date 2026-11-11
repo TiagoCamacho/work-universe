@@ -5,7 +5,8 @@ import { actionsFromScripts, guessIcon, isSafeScriptName, readScripts } from './
 import { CustomAction } from './actions/types';
 import { UniverseStore } from './model/store';
 import { Universe, UniverseMode } from './model/types';
-import { sameUri } from './universe/paths';
+import { findSolutionFiles } from './solution/solutionModel';
+import { isInside, sameUri } from './universe/paths';
 import { Switcher } from './universe/switcher';
 import { pickColor, pickIcon, pickUniverse, pickWorkspace, showQuickSwitch } from './ui/quickPick';
 import { Node, UniverseNode, WorkspaceNode } from './ui/util';
@@ -31,6 +32,60 @@ async function pickMode(current: UniverseMode, placeHolder: string): Promise<Uni
 		{ placeHolder },
 	);
 	return picked?.mode;
+}
+
+/**
+ * Asks which solution of `folder` the panel should show. Returns the solution, `null` for the
+ * plain folder view, or `undefined` if cancelled. With `ifAny`, returns `null` without asking when
+ * the folder contains no solution.
+ */
+async function pickSolution(
+	folder: vscode.Uri,
+	name: string,
+	options: { current?: string; ifAny?: boolean } = {},
+): Promise<vscode.Uri | null | undefined> {
+	const found = await findSolutionFiles(folder);
+	if (!found.length && options.ifAny) {
+		return null;
+	}
+	const mark = (uri?: vscode.Uri) => ((uri ? options.current === uri.toString() : !options.current) ? '  $(check) current' : '');
+	type Item = vscode.QuickPickItem & { solution?: vscode.Uri | null };
+	const items: Item[] = [
+		...found.map(uri => ({
+			label: `$(library) ${path.posix.basename(uri.path)}`,
+			description: (path.posix.relative(folder.path, path.posix.dirname(uri.path)) || '.') + mark(uri),
+			detail: 'Show like the Solution Explorer of Visual Studio',
+			solution: uri,
+		})),
+		{ label: '$(folder) Plain folder view', description: mark(), detail: 'Show the folder\'s files as they are on disk', solution: null },
+		{ label: '$(folder-opened) Browse for a solution file…', alwaysShow: true },
+	];
+	const picked = await vscode.window.showQuickPick(items, {
+		title: `Solution view for "${name}"`,
+		placeHolder: found.length ? 'This folder contains a Visual Studio solution. How should it be shown?' : 'No solution found in this folder',
+	});
+	if (!picked) {
+		return undefined;
+	}
+	if (picked.solution !== undefined) {
+		return picked.solution;
+	}
+	const chosen = await vscode.window.showOpenDialog({
+		defaultUri: folder,
+		canSelectFiles: true,
+		canSelectFolders: false,
+		canSelectMany: false,
+		openLabel: 'Use Solution',
+		filters: { 'Visual Studio Solution': ['sln', 'slnx'] },
+	});
+	if (!chosen?.[0]) {
+		return undefined;
+	}
+	if (!isInside(chosen[0], folder)) {
+		vscode.window.showWarningMessage(`Work Universe: the solution must be inside "${folder.fsPath}".`);
+		return undefined;
+	}
+	return chosen[0];
 }
 
 export function registerCommands(
@@ -92,7 +147,7 @@ export function registerCommands(
 					f => !universe.workspaces.some(w => sameUri(w.uri, f.uri)),
 				);
 
-		let folders: { uri: vscode.Uri; name: string }[] = [];
+		let folders: { uri: vscode.Uri; name: string; solution?: vscode.Uri }[] = [];
 		const browse = async () =>
 			(
 				(await vscode.window.showOpenDialog({
@@ -125,6 +180,16 @@ export function registerCommands(
 		}
 		if (!folders.length) {
 			return;
+		}
+		// Folders with a Visual Studio solution can be shown like Visual Studio's Solution Explorer.
+		for (const folder of folders) {
+			if (universe.workspaces.some(w => sameUri(w.uri, folder.uri))) {
+				continue;
+			}
+			const solution = await pickSolution(folder.uri, folder.name, { ifAny: true });
+			if (solution) {
+				folder.solution = solution;
+			}
 		}
 
 		const added = await store.addWorkspaces(universe.id, folders);
@@ -305,6 +370,25 @@ export function registerCommands(
 		}
 		await store.updateWorkspace(found.workspace.id, w => (w.color = color ?? undefined));
 		await switcher.refreshColor();
+	});
+
+	register('workUniverse.setWorkspaceSolution', async (node?: WorkspaceNode) => {
+		const found = await resolveWorkspaceOrActive(node);
+		if (!found) {
+			return;
+		}
+		const { workspace } = found;
+		const solution = await pickSolution(vscode.Uri.parse(workspace.uri), workspace.name, { current: workspace.solution });
+		if (solution === undefined) {
+			return;
+		}
+		await store.updateWorkspace(workspace.id, w => {
+			if (solution) {
+				w.solution = solution.toString();
+			} else {
+				delete w.solution;
+			}
+		});
 	});
 
 	register('workUniverse.switchWorkspace', async (node?: WorkspaceNode | string) => {

@@ -2,7 +2,8 @@ import * as vscode from 'vscode';
 import { UniverseStore, newId } from '../model/store';
 import { ALL_WORKSPACES, Universe, UniverseMode, Workspace } from '../model/types';
 import { logError, Timeline, timeline } from '../perf';
-import { sameUri } from './paths';
+import { planFolderEdits } from './folderPlan';
+import { sameUri, uriKey } from './paths';
 import { captureTabs, closeTabs, restoreTabs, tabUri } from './tabSession';
 import { applyWorkspaceColor } from './theme';
 import { ANCHOR_PREFIX, UniverseFiles } from './workspaceFile';
@@ -621,8 +622,28 @@ export class Switcher implements vscode.Disposable {
 		return `→ ${target?.name ?? 'all'} [${mode}, restored ${restored} tabs, closed ${closed}, waited ${waited}ms for the previous switch]`;
 	}
 
+	/**
+	 * Makes folders 1..n of the window `targets`. Folders that are loaded before and after stay
+	 * untouched: removing and re-adding one makes language servers (C# Dev Kit, …) reload every
+	 * project in it, and a second switch during that reload left them with all projects failed.
+	 */
 	private async replaceFolders(targets: Workspace[]): Promise<void> {
-		const count = (vscode.workspace.workspaceFolders?.length ?? 1) - 1;
+		// The name is part of the key: VS Code can only rename a folder by replacing it.
+		const key = (uri: vscode.Uri | string, name: string) => uriKey(uri) + '\n' + name;
+		const loaded = (vscode.workspace.workspaceFolders ?? []).slice(1).map(f => key(f.uri, f.name));
+		const edits = planFolderEdits(loaded, targets.map(w => key(w.uri, w.name)));
+		for (const edit of edits) {
+			// Folder 0 is the anchor, so every index is shifted by one.
+			await this.updateFolders(
+				edit.start + 1,
+				edit.deleteCount,
+				edit.insert.map(i => ({ uri: vscode.Uri.parse(targets[i].uri), name: targets[i].name })),
+			);
+		}
+	}
+
+	/** One folder update, resolved once VS Code reports it (the next update must wait for that). */
+	private async updateFolders(start: number, deleteCount: number, add: { uri: vscode.Uri; name: string }[]): Promise<void> {
 		const changed = new Promise<void>(resolve => {
 			const timer = setTimeout(() => {
 				listener.dispose();
@@ -634,11 +655,7 @@ export class Switcher implements vscode.Disposable {
 				resolve();
 			});
 		});
-		const ok = vscode.workspace.updateWorkspaceFolders(
-			1,
-			count,
-			...targets.map(w => ({ uri: vscode.Uri.parse(w.uri), name: w.name })),
-		);
+		const ok = vscode.workspace.updateWorkspaceFolders(start, deleteCount, ...add);
 		if (!ok) {
 			throw new Error('VS Code rejected the workspace folder update.');
 		}
