@@ -1,6 +1,10 @@
 # Change Log
 
-## Unreleased
+## 0.0.7
+
+- **Fix**: opening a universe's `.code-workspace` file from a new place (its folder was moved or renamed, or a copy carries the same universe) showed "the header folder was removed or moved" and refused every switch. The universe now follows the file that is open.
+
+## 0.0.6
 
 - **Custom actions are kept per folder**: removing a project or deleting a universe no longer deletes its custom actions. Adding the folder again brings them back, and a folder that is in two universes shares one set. Existing action files are moved to the new naming on the first start.
 - **Project actions file**: a project can bring its own actions in `.vscode/work-universe.json`. When it exists it replaces your stored actions for that folder (only in a trusted window). **Move Custom Actions to Project File** creates it from your current actions.

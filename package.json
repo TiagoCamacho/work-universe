@@ -4,7 +4,7 @@
   "publisher": "tiagocamacho",
   "icon": "media/icon.png",
   "description": "Group several project folders into one window and switch between them with tabs: files, search, editor tabs and custom action buttons follow the active project.",
-  "version": "0.0.5",
+  "version": "0.0.7",
   "license": "MIT",
   "repository": {
     "type": "git",

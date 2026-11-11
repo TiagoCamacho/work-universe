@@ -221,6 +221,8 @@ export class Switcher implements vscode.Disposable {
 		const imported = !this.store.getUniverse(id);
 		if (imported) {
 			await this.importOpenUniverse(id);
+		} else {
+			await this.followMovedWorkspaceFile(id);
 		}
 		const universe = this.store.getUniverse(id);
 		if (!universe) {
@@ -295,6 +297,28 @@ export class Switcher implements vscode.Disposable {
 		};
 		universe.activeWorkspaceId = universe.workspaces[0]?.id;
 		await this.store.importUniverse(universe);
+	}
+
+	/**
+	 * An imported universe remembers where its .code-workspace file and header folder were. When
+	 * the window opens that universe from another place (the folder was moved or renamed, or a
+	 * second copy of the file carries the same id), the remembered paths follow the open file;
+	 * otherwise every switch would be refused because the header looks missing.
+	 */
+	private async followMovedWorkspaceFile(id: string): Promise<void> {
+		const universe = this.store.getUniverse(id);
+		const file = vscode.workspace.workspaceFile;
+		const header = vscode.workspace.workspaceFolders?.[0];
+		if (!universe?.anchor || !file || file.scheme === 'untitled' || !header?.name.startsWith(ANCHOR_PREFIX)) {
+			return; // generated universes live in our storage and never move
+		}
+		if (sameUri(this.files.workspaceFile(universe), file) && sameUri(this.files.anchor(universe), header.uri)) {
+			return;
+		}
+		await this.store.updateUniverse(id, u => {
+			u.anchor = header.uri.toString();
+			u.workspaceFile = file.toString();
+		});
 	}
 
 	/**
