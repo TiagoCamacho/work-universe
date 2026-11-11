@@ -54,6 +54,21 @@ export class UniverseStore implements vscode.Disposable {
 		return universe;
 	}
 
+	/** Adds a universe defined elsewhere (e.g. read from an opened workspace file). */
+	async importUniverse(universe: Universe): Promise<void> {
+		await this.saveUniverses([...this.getUniverses().filter(u => u.id !== universe.id), universe]);
+	}
+
+	async reorderWorkspaces(universeId: string, orderedIds: string[]): Promise<void> {
+		await this.updateUniverse(universeId, u => {
+			const rank = (id: string) => {
+				const i = orderedIds.indexOf(id);
+				return i < 0 ? Number.MAX_SAFE_INTEGER : i;
+			};
+			u.workspaces.sort((a, b) => rank(a.id) - rank(b.id));
+		});
+	}
+
 	async updateUniverse(id: string, mutate: (u: Universe) => void): Promise<Universe | undefined> {
 		const universes = this.getUniverses().map(u => structuredClone(u));
 		const target = universes.find(u => u.id === id);

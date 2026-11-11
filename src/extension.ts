@@ -1,10 +1,18 @@
 import * as vscode from 'vscode';
+import { ActionRunner } from './actions/actionRunner';
+import { ActionStore } from './actions/actionStore';
 import { registerCommands } from './commands';
+import { registerFileCommands } from './fileCommands';
 import { UniverseStore } from './model/store';
+import { initPerf } from './perf';
 import { Switcher } from './universe/switcher';
 import { UniverseFiles } from './universe/workspaceFile';
+import { DecorationSource } from './ui/decorations';
+import { FileModel } from './ui/fileModel';
+import { IconThemeResolver } from './ui/iconTheme';
+import { PANEL_VIEW_ID, UniversePanel } from './ui/panel';
+import { pickUniverse } from './ui/quickPick';
 import { UniverseStatusBar } from './ui/statusBar';
-import { UniverseTreeProvider } from './ui/treeProvider';
 
 export interface WorkUniverseApi {
 	store: UniverseStore;
@@ -12,18 +20,38 @@ export interface WorkUniverseApi {
 }
 
 export async function activate(context: vscode.ExtensionContext): Promise<WorkUniverseApi> {
+	initPerf(context);
 	const store = new UniverseStore(context.globalState);
 	const files = new UniverseFiles(context.globalStorageUri);
 	const switcher = new Switcher(store, files);
-	const tree = new UniverseTreeProvider(store, switcher);
+	const model = new FileModel();
+	const icons = new IconThemeResolver();
+	const decorations = new DecorationSource();
+	const actionStore = new ActionStore(context.globalStorageUri);
+	const actionRunner = new ActionRunner();
+	const panel = new UniversePanel(context.extensionUri, store, switcher, model, icons, decorations, actionStore, actionRunner);
 	const statusBar = new UniverseStatusBar(store, switcher);
 
 	context.subscriptions.push(
 		store,
 		switcher,
-		tree,
+		model,
+		icons,
+		decorations,
+		actionStore,
+		actionRunner,
+		panel,
 		statusBar,
-		vscode.window.createTreeView('workUniverse.universes', { treeDataProvider: tree, showCollapseAll: true }),
+		vscode.window.registerWebviewViewProvider(PANEL_VIEW_ID, panel, { webviewOptions: { retainContextWhenHidden: true } }),
+		vscode.commands.registerCommand('workUniverse.files.collapseAll', () => panel.collapseAll()),
+		vscode.commands.registerCommand('workUniverse.showActionTerminal', (key: string) => actionRunner.showTerminal(key)),
+		vscode.commands.registerCommand('workUniverse.files.refresh', () => model.changed()),
+		vscode.commands.registerCommand('workUniverse.openUniverse', async () => {
+			const universe = await pickUniverse(store, 'Open a universe in this window', switcher.currentUniverseId());
+			if (universe) {
+				await switcher.openUniverse(universe, universe.activeWorkspaceId ?? universe.workspaces[0]?.id);
+			}
+		}),
 		// Global state can be changed by other windows; re-read when this one regains focus.
 		vscode.window.onDidChangeWindowState(e => e.focused && store.refresh()),
 		vscode.workspace.onDidChangeConfiguration(e => {
@@ -33,7 +61,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<WorkUn
 		}),
 	);
 
-	registerCommands(context, store, switcher);
+	registerCommands(context, store, switcher, actionStore);
+	registerFileCommands(context, panel);
 
 	try {
 		await switcher.onActivated();

@@ -4,6 +4,9 @@ import { UniverseStore } from '../model/store';
 import { isInside, sameUri } from '../universe/paths';
 import { colorCustomizationsFor, contrastColor, isHexColor } from '../universe/theme';
 import { buildWorkspaceJson } from '../universe/workspaceFile';
+import { compileExcludes, isExcluded } from '../ui/glob';
+import { IconThemeResolver } from '../ui/iconTheme';
+import { parseJsonc } from '../ui/util';
 import { MemoryMemento } from './helpers';
 
 suite('paths', () => {
@@ -43,7 +46,7 @@ suite('theme', () => {
 suite('workspace file', () => {
 	test('anchor is always folder 0', () => {
 		const anchor = vscode.Uri.file('/storage/universes/u1/anchor');
-		const json = buildWorkspaceJson(anchor, '◈ Product', [
+		const json = buildWorkspaceJson('u1', anchor, '◈ Product', [
 			{ id: 'w1', name: 'backend', uri: vscode.Uri.file('/work/backend').toString() },
 			{ id: 'w2', name: 'remote', uri: 'vscode-remote://ssh-remote+box/home/app' },
 		]);
@@ -52,6 +55,22 @@ suite('workspace file', () => {
 		assert.strictEqual(json.folders[0].name, '◈ Product');
 		assert.strictEqual(json.folders[1].path, vscode.Uri.file('/work/backend').fsPath);
 		assert.strictEqual(json.folders[2].uri, 'vscode-remote://ssh-remote+box/home/app');
+		assert.strictEqual(json.settings?.['workUniverse.universeId'], 'u1', 'file carries its universe id');
+	});
+});
+
+suite('files.exclude globs', () => {
+	test('matches the default exclude patterns', () => {
+		const ex = compileExcludes({ '**/.git': true, '**/node_modules': true, '**/*.{log,tmp}': true, 'build/': true, 'off': false });
+		assert.ok(isExcluded('.git', ex));
+		assert.ok(isExcluded('packages/app/node_modules', ex));
+		assert.ok(isExcluded('logs/server.log', ex));
+		assert.ok(isExcluded('a.tmp', ex));
+		assert.ok(isExcluded('build', ex));
+		assert.ok(!isExcluded('src/build', ex));
+		assert.ok(!isExcluded('src/index.ts', ex));
+		assert.ok(!isExcluded('off', ex));
+		assert.ok(!isExcluded('.gitignore', ex));
 	});
 });
 
@@ -92,5 +111,25 @@ suite('store', () => {
 		assert.strictEqual(await store.takePending('other'), undefined);
 		assert.strictEqual((await store.takePending('u'))?.workspaceId, 'w');
 		assert.strictEqual(await store.takePending('u'), undefined);
+	});
+});
+
+suite('icon theme', () => {
+	test('parses JSON with comments and trailing commas', () => {
+		const value = parseJsonc<{ a: string; b: number[] }>('{ // c\n "a": "x//y", /* d */ "b": [1, 2,], }');
+		assert.deepStrictEqual(value, { a: 'x//y', b: [1, 2] });
+	});
+
+	test('resolves icons from the active (built-in Seti) theme', async () => {
+		const resolver = new IconThemeResolver();
+		try {
+			await resolver.ready();
+			assert.ok(resolver.hasTheme, 'default icon theme found');
+			assert.ok(resolver.fileIcon('index.ts'), 'icon for .ts');
+			assert.ok(resolver.fileIcon('package.json'), 'icon for package.json');
+			assert.ok(resolver.resourceRoots.length === 1);
+		} finally {
+			resolver.dispose();
+		}
 	});
 });

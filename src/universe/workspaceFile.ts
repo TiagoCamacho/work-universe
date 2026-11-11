@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { Universe, Workspace } from '../model/types';
+import { UNIVERSE_ID_SETTING, Universe, Workspace } from '../model/types';
 import { sameUri } from './paths';
 
 export const ANCHOR_PREFIX = '◈ ';
@@ -17,7 +17,7 @@ export interface WorkspaceFileJson {
 	settings?: Record<string, unknown>;
 }
 
-/** Locates the generated files of each universe below the extension's global storage. */
+/** Locates each universe's anchor folder and .code-workspace file (generated below global storage by default). */
 export class UniverseFiles {
 	constructor(private readonly storageRoot: vscode.Uri) {}
 
@@ -25,20 +25,29 @@ export class UniverseFiles {
 		return vscode.Uri.joinPath(this.storageRoot, 'universes', universeId);
 	}
 
-	anchor(universeId: string): vscode.Uri {
-		return vscode.Uri.joinPath(this.dir(universeId), 'anchor');
+	anchor(universe: Universe): vscode.Uri {
+		return universe.anchor ? vscode.Uri.parse(universe.anchor) : vscode.Uri.joinPath(this.dir(universe.id), 'anchor');
 	}
 
-	workspaceFile(universeId: string): vscode.Uri {
-		return vscode.Uri.joinPath(this.dir(universeId), WORKSPACE_FILE_NAME);
+	workspaceFile(universe: Universe): vscode.Uri {
+		return universe.workspaceFile
+			? vscode.Uri.parse(universe.workspaceFile)
+			: vscode.Uri.joinPath(this.dir(universe.id), WORKSPACE_FILE_NAME);
 	}
 
-	/** If `file` is a generated universe workspace file, returns that universe's id. */
+	/**
+	 * Which universe the window's workspace file belongs to: the `workUniverse.universeId` setting
+	 * inside it, or a known universe's workspace file path.
+	 */
 	universeIdOf(file: vscode.Uri | undefined, universes: readonly Universe[]): string | undefined {
 		if (!file || file.scheme === 'untitled') {
 			return undefined;
 		}
-		return universes.find(u => sameUri(this.workspaceFile(u.id), file))?.id;
+		const fromSetting = vscode.workspace.getConfiguration().inspect<string>(UNIVERSE_ID_SETTING)?.workspaceValue;
+		if (fromSetting) {
+			return fromSetting;
+		}
+		return universes.find(u => sameUri(this.workspaceFile(u), file))?.id;
 	}
 
 	anchorName(universe: Universe): string {
@@ -55,10 +64,10 @@ export class UniverseFiles {
 	}
 
 	/** Makes sure the anchor folder and its settings exist. */
-	async ensureAnchor(universeId: string): Promise<void> {
-		const settingsUri = vscode.Uri.joinPath(this.anchor(universeId), '.vscode', 'settings.json');
-		await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(this.anchor(universeId), '.vscode'));
-		await writeJson(settingsUri, ANCHOR_SETTINGS);
+	async ensureAnchor(universe: Universe): Promise<void> {
+		const dotVscode = vscode.Uri.joinPath(this.anchor(universe), '.vscode');
+		await vscode.workspace.fs.createDirectory(dotVscode);
+		await writeJson(vscode.Uri.joinPath(dotVscode, 'settings.json'), ANCHOR_SETTINGS);
 	}
 
 	/**
@@ -66,18 +75,18 @@ export class UniverseFiles {
 	 * `settings` from an existing file are preserved.
 	 */
 	async writeWorkspaceFile(universe: Universe, folders: Workspace[]): Promise<vscode.Uri> {
-		await this.ensureAnchor(universe.id);
-		const file = this.workspaceFile(universe.id);
+		await this.ensureAnchor(universe);
+		const file = this.workspaceFile(universe);
 		const existing = await readJson<WorkspaceFileJson>(file);
-		const json = buildWorkspaceJson(this.anchor(universe.id), this.anchorName(universe), folders, existing?.settings);
+		const json = buildWorkspaceJson(universe.id, this.anchor(universe), this.anchorName(universe), folders, existing?.settings);
 		await writeJson(file, json);
 		return file;
 	}
 
 	/** Creates the workspace file if missing; otherwise leaves it alone (VS Code owns it while open). */
 	async ensureWorkspaceFile(universe: Universe, initial: Workspace[]): Promise<vscode.Uri> {
-		const file = this.workspaceFile(universe.id);
-		await this.ensureAnchor(universe.id);
+		const file = this.workspaceFile(universe);
+		await this.ensureAnchor(universe);
 		if (!(await this.exists(file))) {
 			await this.writeWorkspaceFile(universe, initial);
 		}
@@ -86,7 +95,7 @@ export class UniverseFiles {
 
 	/** Updates the anchor's display name in a workspace file that is not open in this window. */
 	async renameAnchor(universe: Universe): Promise<void> {
-		const file = this.workspaceFile(universe.id);
+		const file = this.workspaceFile(universe);
 		const json = await readJson<WorkspaceFileJson>(file);
 		if (json?.folders?.length) {
 			json.folders[0].name = this.anchorName(universe);
@@ -120,6 +129,7 @@ export class UniverseFiles {
 }
 
 export function buildWorkspaceJson(
+	universeId: string,
 	anchor: vscode.Uri,
 	anchorName: string,
 	folders: Workspace[],
@@ -133,7 +143,7 @@ export function buildWorkspaceJson(
 				return uri.scheme === 'file' ? { path: uri.fsPath, name: ws.name } : { uri: ws.uri, name: ws.name };
 			}),
 		],
-		settings: settings ?? {},
+		settings: { ...(settings ?? {}), [UNIVERSE_ID_SETTING]: universeId },
 	};
 }
 

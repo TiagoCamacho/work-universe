@@ -4,6 +4,20 @@
 	"version": "2.0.0",
 	"tasks": [
 		{
+			"label": "dev: universe fixture",
+			"type": "shell",
+			"command": "node",
+			"args": ["scripts/dev-universe.js"],
+			"presentation": { "reveal": "silent" },
+			"problemMatcher": []
+		},
+		{
+			"label": "dev: prepare",
+			"dependsOrder": "sequence",
+			"dependsOn": ["dev: universe fixture", "watch"],
+			"problemMatcher": []
+		},
+		{
             "label": "watch",
             "dependsOn": [
                 "npm: watch:tsc",
@@ -21,7 +35,20 @@
             "type": "npm",
             "script": "watch:esbuild",
             "group": "build",
-            "problemMatcher": "$esbuild-watch",
+            "problemMatcher": {
+                "owner": "esbuild",
+                "source": "esbuild",
+                "fileLocation": ["relative", "${workspaceFolder}"],
+                "pattern": [
+                    { "regexp": "^✘ \\[ERROR\\] (.*)$", "message": 1 },
+                    { "regexp": "^\\s+(.*):(\\d+):(\\d+):$", "file": 1, "line": 2, "column": 3 }
+                ],
+                "background": {
+                    "activeBegins": true,
+                    "beginsPattern": "^\\[watch\\] build started",
+                    "endsPattern": "^\\[watch\\] build finished"
+                }
+            },
             "isBackground": true,
             "label": "npm: watch:esbuild",
             "presentation": {

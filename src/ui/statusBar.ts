@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { UniverseStore } from '../model/store';
 import { Switcher } from '../universe/switcher';
-import { DEFAULT_WORKSPACE_ICON } from './treeProvider';
+import { DEFAULT_WORKSPACE_ICON } from './util';
 
 /** `$(icon) Universe › Workspace` on the left of the status bar; click opens the quick switcher. */
 export class UniverseStatusBar implements vscode.Disposable {

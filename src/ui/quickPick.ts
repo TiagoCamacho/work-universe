@@ -3,7 +3,7 @@ import { UniverseStore } from '../model/store';
 import { Universe, Workspace } from '../model/types';
 import { Switcher } from '../universe/switcher';
 import { PRESET_COLORS, isHexColor } from '../universe/theme';
-import { DEFAULT_WORKSPACE_ICON, shortPath } from './treeProvider';
+import { DEFAULT_WORKSPACE_ICON, shortPath } from './util';
 
 type SwitchItem = vscode.QuickPickItem & {
 	action?: 'switch' | 'all' | 'create';

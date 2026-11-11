@@ -1,32 +1,84 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { ActionStore } from './actions/actionStore';
+import { actionsFromScripts, guessIcon, readScripts } from './actions/scripts';
+import { CustomAction } from './actions/types';
 import { UniverseStore } from './model/store';
-import { Universe } from './model/types';
+import { Universe, UniverseMode } from './model/types';
 import { sameUri } from './universe/paths';
 import { Switcher } from './universe/switcher';
 import { pickColor, pickIcon, pickUniverse, pickWorkspace, showQuickSwitch } from './ui/quickPick';
-import { Node, UniverseNode, WorkspaceNode } from './ui/treeProvider';
+import { Node, UniverseNode, WorkspaceNode } from './ui/util';
 
-export function registerCommands(context: vscode.ExtensionContext, store: UniverseStore, switcher: Switcher): void {
+/** Asks whether a universe keeps its projects separate or all loaded together. */
+async function pickMode(current: UniverseMode, placeHolder: string): Promise<UniverseMode | undefined> {
+	const mark = (mode: UniverseMode) => (mode === current ? '  $(check) current' : '');
+	const picked = await vscode.window.showQuickPick<vscode.QuickPickItem & { mode: UniverseMode }>(
+		[
+			{
+				label: '$(lock) Separate environments',
+				description: mark('isolated'),
+				detail: 'Only the active project is loaded. Search, Source Control and the Explorer show just that project. Each switch changes the folders of the window.',
+				mode: 'isolated',
+			},
+			{
+				label: '$(layers) All together',
+				description: mark('together'),
+				detail: 'Every project stays loaded, so switching is faster. Ctrl+Shift+F is scoped to the active project; quick open, Source Control and the Explorer show all projects.',
+				mode: 'together',
+			},
+		],
+		{ placeHolder },
+	);
+	return picked?.mode;
+}
+
+export function registerCommands(
+	context: vscode.ExtensionContext,
+	store: UniverseStore,
+	switcher: Switcher,
+	actions: ActionStore,
+): void {
 	const files = switcher.files;
 
-	const resolveUniverse = async (node?: Node): Promise<Universe | undefined> => {
-		if (node) {
-			return store.getUniverse(node.universe.id);
-		}
-		const currentId = switcher.currentUniverseId();
-		return pickUniverse(store, 'Pick a universe', currentId);
+	// Commands are run from several places (panel menus, tab right-click, command palette, other
+	// code) and each passes a different argument, or VS Code's own context object. So arguments are
+	// only used when they really identify a universe or workspace; anything else is ignored.
+
+	const universeFromArg = (arg: unknown): Universe | undefined => {
+		const id = (arg as { universe?: { id?: unknown } } | undefined)?.universe?.id;
+		return typeof id === 'string' ? store.getUniverse(id) : undefined;
 	};
 
-	const resolveWorkspace = async (node?: Node | string) => {
-		if (typeof node === 'string') {
-			return store.findWorkspace(node);
-		}
-		if (node?.type === 'workspace') {
-			return store.findWorkspace(node.workspace.id);
-		}
-		return pickWorkspace(store, 'Pick a workspace');
+	/** The universe a command acts on: the one passed in, else the one open in this window, else a pick. */
+	const resolveUniverse = async (arg?: unknown): Promise<Universe | undefined> => {
+		const currentId = switcher.currentUniverseId();
+		return (
+			universeFromArg(arg) ??
+			(currentId ? store.getUniverse(currentId) : undefined) ??
+			pickUniverse(store, 'Pick a universe')
+		);
 	};
+
+	const workspaceFromArg = (arg: unknown) => {
+		const a = arg as { workspaceId?: unknown; type?: unknown; workspace?: { id?: unknown } } | undefined;
+		const id =
+			typeof arg === 'string'
+				? arg
+				: typeof a?.workspaceId === 'string'
+					? a.workspaceId // right-click on a tab or action button of the panel
+					: a?.type === 'workspace' && typeof a.workspace?.id === 'string'
+						? a.workspace.id
+						: undefined;
+		return id ? store.findWorkspace(id) : undefined;
+	};
+
+	/** The workspace a command acts on: the one passed in, else a pick. */
+	const resolveWorkspace = async (arg?: unknown) => workspaceFromArg(arg) ?? pickWorkspace(store, 'Pick a workspace');
+
+	/** Like `resolveWorkspace`, but defaults to the active workspace before asking. */
+	const resolveWorkspaceOrActive = async (arg?: unknown) =>
+		workspaceFromArg(arg) ?? switcher.activeWorkspace() ?? pickWorkspace(store, 'Pick a workspace');
 
 	const addWorkspace = async (node?: UniverseNode): Promise<void> => {
 		const universe = await resolveUniverse(node);
@@ -80,7 +132,10 @@ export function registerCommands(context: vscode.ExtensionContext, store: Univer
 			vscode.window.showInformationMessage('Work Universe: those folders are already in this universe.');
 			return;
 		}
-		if (!isCurrent) {
+		if (isCurrent) {
+			// Adding from the "+" tab jumps straight to the new workspace.
+			await switcher.switchTo(added[0].id);
+		} else {
 			const open = await vscode.window.showInformationMessage(
 				`Added ${added.map(w => w.name).join(', ')} to "${universe.name}". Open the universe in this window now?`,
 				'Open Universe',
@@ -103,9 +158,33 @@ export function registerCommands(context: vscode.ExtensionContext, store: Univer
 		if (!name) {
 			return;
 		}
+		const mode = await pickMode('isolated', 'How should this universe work? (you can change it later)');
+		if (!mode) {
+			return;
+		}
 		const universe = await store.createUniverse(name.trim());
+		await switcher.setMode(universe.id, mode);
 		await addWorkspace({ type: 'universe', universe });
 	});
+
+	register('workUniverse.setUniverseMode', async (node?: unknown) => {
+		const universe = await resolveUniverse(node);
+		if (!universe) {
+			return;
+		}
+		const current = universe.mode ?? 'isolated';
+		const mode = await pickMode(current, `Mode of "${universe.name}"`);
+		if (mode && mode !== current) {
+			await switcher.setMode(universe.id, mode);
+			vscode.window.showInformationMessage(
+				mode === 'together'
+					? `"${universe.name}" now keeps all its projects loaded together.`
+					: `"${universe.name}" now keeps its projects in separate environments.`,
+			);
+		}
+	});
+
+	register('workUniverse.searchWorkspace', () => switcher.searchActive());
 
 	register('workUniverse.addWorkspace', (node?: UniverseNode) => addWorkspace(node));
 
@@ -154,6 +233,7 @@ export function registerCommands(context: vscode.ExtensionContext, store: Univer
 			return;
 		}
 		await store.deleteUniverse(universe.id);
+		await Promise.all(universe.workspaces.map(w => actions.delete(w.id)));
 		if (isCurrent) {
 			// Files are cleaned up on the next activation, once nothing has them open.
 			await vscode.commands.executeCommand('workbench.action.closeFolder');
@@ -183,6 +263,7 @@ export function registerCommands(context: vscode.ExtensionContext, store: Univer
 			}
 		}
 		await store.removeWorkspace(workspace.id);
+		await actions.delete(workspace.id);
 	});
 
 	register('workUniverse.renameWorkspace', async (node?: WorkspaceNode) => {
@@ -237,13 +318,8 @@ export function registerCommands(context: vscode.ExtensionContext, store: Univer
 	register('workUniverse.nextWorkspace', () => switcher.cycle(1));
 	register('workUniverse.previousWorkspace', () => switcher.cycle(-1));
 
-	register('workUniverse.searchUniverse', async (node?: UniverseNode) => {
-		const currentId = switcher.currentUniverseId();
-		const universe = node
-			? store.getUniverse(node.universe.id)
-			: currentId
-				? store.getUniverse(currentId)
-				: await resolveUniverse();
+	register('workUniverse.searchUniverse', async (node?: unknown) => {
+		const universe = await resolveUniverse(node);
 		if (universe) {
 			await switcher.showAll(universe.id);
 		}
@@ -251,4 +327,69 @@ export function registerCommands(context: vscode.ExtensionContext, store: Univer
 
 	register('workUniverse.repairUniverse', () => switcher.repair());
 	register('workUniverse.refresh', () => store.refresh());
+
+	register('workUniverse.setCustomActions', async (arg?: Node | string | { workspaceId?: string }) => {
+		const found = await resolveWorkspaceOrActive(arg);
+		if (!found) {
+			return;
+		}
+		const { workspace } = found;
+		if (!(await actions.exists(workspace.id))) {
+			const folder = vscode.Uri.parse(workspace.uri);
+			const scripts = Object.keys(await readScripts(folder));
+			let initial: CustomAction[] = [];
+			if (scripts.length) {
+				type Item = vscode.QuickPickItem & { script: string };
+				const picked = await vscode.window.showQuickPick<Item>(
+					scripts.map(script => ({ label: `$(${guessIcon(script)}) ${script}`, description: 'package.json script', picked: true, script })),
+					{
+						canPickMany: true,
+						title: `Custom actions for ${workspace.name}`,
+						placeHolder: 'Create buttons for these package.json scripts (uncheck all to start empty)',
+					},
+				);
+				if (!picked) {
+					return;
+				}
+				initial = await actionsFromScripts(folder, picked.map(p => p.script));
+			}
+			if (!initial.length) {
+				initial = [{ label: 'Example', icon: 'play', command: 'echo "Edit me in this file"' }];
+			}
+			await actions.write(workspace.id, workspace.name, initial);
+		}
+		const doc = await vscode.workspace.openTextDocument(actions.fileFor(workspace.id));
+		await vscode.window.showTextDocument(doc, { preview: false });
+		vscode.window.setStatusBarMessage(`Work Universe: editing actions of "${workspace.name}". Save to update the buttons.`, 6000);
+	});
+
+	register('workUniverse.removeAllActions', async (arg?: Node | string | { workspaceId?: string }) => {
+		const found = await resolveWorkspaceOrActive(arg);
+		if (!found) {
+			return;
+		}
+		const { workspace } = found;
+		const count = (await actions.get(workspace.id)).actions.length;
+		if (!(await actions.exists(workspace.id))) {
+			vscode.window.showInformationMessage(`Work Universe: "${workspace.name}" has no custom actions.`);
+			return;
+		}
+		const choice = await vscode.window.showWarningMessage(
+			`Remove all ${count} custom action${count === 1 ? '' : 's'} of "${workspace.name}"?`,
+			{ modal: true, detail: 'The buttons and their configuration file are deleted. Terminals that are already running keep running.' },
+			'Remove All',
+		);
+		if (choice !== 'Remove All') {
+			return;
+		}
+		// Close the actions file if it's open, so it doesn't linger as a deleted file.
+		const file = actions.fileFor(workspace.id);
+		const openTabs = vscode.window.tabGroups.all
+			.flatMap(g => g.tabs)
+			.filter(t => t.input instanceof vscode.TabInputText && sameUri(t.input.uri, file));
+		if (openTabs.length) {
+			await vscode.window.tabGroups.close(openTabs, true);
+		}
+		await actions.delete(workspace.id);
+	});
 }

@@ -59,8 +59,11 @@ export function colorCustomizationsFor(hex: string | undefined): Record<string, 
 	};
 }
 
-/** Writes (or clears) the workspace color into the current .code-workspace settings. */
-export async function applyWorkspaceColor(hex: string | undefined): Promise<void> {
+/**
+ * Writes (or clears) the workspace color into the current .code-workspace settings.
+ * Returns false, without writing anything, when that color is already applied.
+ */
+export async function applyWorkspaceColor(hex: string | undefined): Promise<boolean> {
 	const enabled = vscode.workspace.getConfiguration('workUniverse').get<boolean>('applyColors', true);
 	const config = vscode.workspace.getConfiguration('workbench');
 	const current = config.inspect<Record<string, unknown>>('colorCustomizations')?.workspaceValue ?? {};
@@ -72,11 +75,12 @@ export async function applyWorkspaceColor(hex: string | undefined): Promise<void
 		Object.assign(next, colorCustomizationsFor(hex));
 	}
 	if (JSON.stringify(next) === JSON.stringify(current)) {
-		return;
+		return false;
 	}
 	await config.update(
 		'colorCustomizations',
 		Object.keys(next).length ? next : undefined,
 		vscode.ConfigurationTarget.Workspace,
 	);
+	return true;
 }

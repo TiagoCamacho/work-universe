@@ -86,31 +86,43 @@ export async function closeTabs(tabs: readonly vscode.Tab[]): Promise<void> {
 	}
 }
 
-function showOptions(tab: SavedTab, viewColumn: number, preserveFocus: boolean): vscode.TextDocumentShowOptions {
-	const options: vscode.TextDocumentShowOptions = { viewColumn, preview: false, preserveFocus };
-	if (tab.selection) {
+export interface RestoreOptions {
+	/** Runs once the first restored editor is showing (or right away if there is nothing to restore). */
+	onFirstShown?: () => Promise<void> | void;
+	/**
+	 * Awaited after the active editors are showing and before the remaining tabs are added, so
+	 * those tabs don't compete with more urgent work.
+	 */
+	beforeBackground?: () => Promise<unknown> | void;
+	/** Checked between tabs; returning true stops the restore early. */
+	isCancelled?: () => boolean;
+}
+
+/** `background` is honoured by the `vscode.open` / `vscode.diff` commands but missing from the typings. */
+type OpenOptions = vscode.TextDocumentShowOptions & { background?: boolean };
+
+function openOptions(tab: SavedTab, viewColumn: number, background: boolean): OpenOptions {
+	const options: OpenOptions = { viewColumn, preview: false, preserveFocus: background, background };
+	if (tab.selection && !background) {
 		const [sl, sc, el, ec] = tab.selection;
 		options.selection = new vscode.Range(sl, sc, el, ec);
 	}
 	return options;
 }
 
-async function openTab(tab: SavedTab, viewColumn: number, preserveFocus: boolean): Promise<boolean> {
+async function openTab(tab: SavedTab, viewColumn: number, background: boolean): Promise<boolean> {
 	const uri = vscode.Uri.parse(tab.uri);
 	try {
-		if (uri.scheme === 'file') {
-			await vscode.workspace.fs.stat(uri); // skip files that were deleted meanwhile
-		}
 		if (tab.kind === 'diff' && tab.originalUri) {
 			await vscode.commands.executeCommand(
 				'vscode.diff',
 				vscode.Uri.parse(tab.originalUri),
 				uri,
 				tab.label,
-				showOptions(tab, viewColumn, preserveFocus),
+				openOptions(tab, viewColumn, background),
 			);
 		} else {
-			await vscode.commands.executeCommand('vscode.open', uri, showOptions(tab, viewColumn, preserveFocus));
+			await vscode.commands.executeCommand('vscode.open', uri, openOptions(tab, viewColumn, background));
 		}
 		return true;
 	} catch {
@@ -118,28 +130,140 @@ async function openTab(tab: SavedTab, viewColumn: number, preserveFocus: boolean
 	}
 }
 
-/** Re-opens a captured session: same groups, order, pinned state, active tab and cursor. */
-export async function restoreTabs(session: TabSession | undefined): Promise<void> {
-	if (!session?.groups.length) {
-		return;
+async function fileExists(tab: SavedTab): Promise<boolean> {
+	const uri = vscode.Uri.parse(tab.uri);
+	if (uri.scheme !== 'file') {
+		return true;
 	}
-	const groups = [...session.groups].sort((a, b) => a.viewColumn - b.viewColumn);
+	try {
+		await vscode.workspace.fs.stat(uri);
+		return true;
+	} catch {
+		return false; // deleted meanwhile
+	}
+}
+
+/**
+ * Re-opens a captured session: same groups, order, pinned state, active tab and cursor.
+ *
+ * Built for a fast first paint: each group's active tab opens first, in the foreground. After
+ * `beforeBackground` (if given) the other tabs are added as background tabs (no editor is
+ * activated for them), and the active tab is moved to its saved position. Returns false if the
+ * restore was cancelled part-way.
+ */
+export async function restoreTabs(session: TabSession | undefined, options: RestoreOptions = {}): Promise<boolean> {
+	const cancelled = () => options.isCancelled?.() ?? false;
+	const saved = (session?.groups ?? []).filter(g => g.tabs.length);
+	if (!saved.length) {
+		await options.onFirstShown?.();
+		return true;
+	}
+
+	// Every file is checked at once (deleted files are skipped). The checks run while the first
+	// editor opens: only the tab about to be opened has to wait for its own check.
+	const checks = new Map<SavedTab, Promise<boolean>>();
+	for (const tab of saved.flatMap(g => g.tabs)) {
+		checks.set(tab, fileExists(tab));
+	}
+	const existingOf = async (tabs: SavedTab[]) => {
+		const flags = await Promise.all(tabs.map(t => checks.get(t)!));
+		return tabs.filter((_, i) => flags[i]);
+	};
+
+	// The focused group goes first so its active editor is what the user sees first.
+	const focusedGroup = saved.find(g => g.isActive) ?? saved[0];
+	const groups = [focusedGroup, ...saved.filter(g => g !== focusedGroup).sort((a, b) => a.viewColumn - b.viewColumn)];
+	// Where VS Code inserts a newly opened tab relative to the active one.
+	const positioning = vscode.workspace.getConfiguration('workbench.editor').get<string>('openPositioning', 'right');
+	const insertsBeforeActive = positioning === 'left' || positioning === 'first';
+
+	// Phase 1: every group's active editor, the focused group first. This is what the user sees.
+	const shown: { group: SavedGroup; active: SavedTab }[] = [];
 	for (const group of groups) {
-		for (const tab of group.tabs) {
-			// Focus each tab while opening so pinning applies to the right editor.
-			const opened = await openTab(tab, group.viewColumn, false);
-			if (opened && tab.isPinned) {
-				await vscode.commands.executeCommand('workbench.action.pinEditor');
+		let active: SavedTab | undefined = group.tabs.find(t => t.isActive) ?? group.tabs[0];
+		if (!(await checks.get(active)!)) {
+			// The saved active file is gone: fall back to the first one that still exists.
+			active = (await existingOf(group.tabs))[0];
+		}
+		if (!active) {
+			continue;
+		}
+		if (cancelled()) {
+			return false;
+		}
+		await openTab(active, group.viewColumn, false);
+		shown.push({ group, active });
+		if (shown.length === 1) {
+			await options.onFirstShown?.();
+		}
+	}
+	if (!shown.length) {
+		await options.onFirstShown?.();
+		return !cancelled();
+	}
+	const refocus = async () => {
+		// Opening other groups' editors moved the focus; put it back on the saved group.
+		if (shown.length > 1 && !cancelled()) {
+			await openTab(shown[0].active, shown[0].group.viewColumn, false);
+		}
+	};
+	await refocus();
+
+	// Phase 2: let the caller's heavier work (VS Code's folder change) finish undisturbed.
+	await options.beforeBackground?.();
+
+	// Phase 3: the remaining tabs, added in the background, group by group.
+	for (const { group, active } of shown) {
+		if (cancelled()) {
+			return false;
+		}
+		if (shown.length > 1) {
+			// Moving and pinning act on the focused editor, so this group needs the focus.
+			await openTab(active, group.viewColumn, false);
+		}
+		const tabs = await existingOf(group.tabs);
+
+		// Pinned tabs are handled further down: pinning needs a foreground open and moves them to the front.
+		const others = tabs.filter(t => t !== active && !t.isPinned);
+		// 'right' and 'first' insert next to a fixed spot, so the last one opened ends up first.
+		const order = positioning === 'right' || positioning === 'first' ? [...others].reverse() : others;
+		// One at a time: opening them all at once was measured and is no faster overall (VS Code
+		// does the work on one thread), and it would make the tab order depend on timing.
+		for (const tab of order) {
+			if (cancelled()) {
+				return false;
+			}
+			await openTab(tab, group.viewColumn, true);
+		}
+
+		// The active tab now sits before (or after) all the others; move it to its saved place.
+		if (!active.isPinned) {
+			const before = others.filter(t => tabs.indexOf(t) < tabs.indexOf(active)).length;
+			const steps = insertsBeforeActive ? others.length - before : before;
+			if (steps > 0) {
+				await vscode.commands.executeCommand('moveActiveEditor', {
+					to: insertsBeforeActive ? 'left' : 'right',
+					by: 'tab',
+					value: steps,
+				});
 			}
 		}
-		const active = group.tabs.find(t => t.isActive);
-		if (active) {
+
+		// Pinning only works on the active editor, so pinned tabs need a foreground open each.
+		let pinnedAny = false;
+		for (const tab of tabs.filter(t => t.isPinned)) {
+			if (cancelled()) {
+				return false;
+			}
+			if (await openTab(tab, group.viewColumn, false)) {
+				await vscode.commands.executeCommand('workbench.action.pinEditor');
+				pinnedAny = true;
+			}
+		}
+		if (pinnedAny && !cancelled()) {
 			await openTab(active, group.viewColumn, false);
 		}
 	}
-	const activeGroup = groups.find(g => g.isActive) ?? groups[0];
-	const activeTab = activeGroup.tabs.find(t => t.isActive) ?? activeGroup.tabs[0];
-	if (activeTab) {
-		await openTab(activeTab, activeGroup.viewColumn, false);
-	}
+	await refocus();
+	return !cancelled();
 }
