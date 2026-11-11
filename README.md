@@ -2,6 +2,10 @@
 
 Group several project folders (for example `backend` and `frontend`) into a **universe** and work on **one at a time** in a single VS Code window. The explorer, search, source control and open tabs all follow the active workspace. It feels like several VS Code windows living in one window.
 
+<p align="center">
+  <img src="media/icon.png" alt="Work Universe icon" width="128">
+</p>
+
 ## Features
 
 - **One activity bar panel**, with no sections:
