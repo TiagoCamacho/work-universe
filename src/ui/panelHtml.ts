@@ -1,9 +1,11 @@
+import { randomBytes } from 'crypto';
 import * as vscode from 'vscode';
 import { PANEL_SCRIPT } from './panelScript';
 
 /** HTML + script of the Work Universe panel (tab strip + file tree). */
 export function panelHtml(webview: vscode.Webview, codiconCss: vscode.Uri): string {
-	const nonce = Array.from({ length: 32 }, () => Math.floor(Math.random() * 36).toString(36)).join('');
+	// The nonce is what lets only our own script run in the webview, so it must be unguessable.
+	const nonce = randomBytes(24).toString('base64url');
 	const csp = [
 		`default-src 'none'`,
 		`font-src ${webview.cspSource}`,

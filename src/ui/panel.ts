@@ -22,6 +22,9 @@ export const PANEL_VIEW_ID = 'workUniverse.panel';
  */
 const DECORATION_GRACE_MS = 1200;
 
+/** The only commands a message from the webview is allowed to run. */
+const WEBVIEW_COMMANDS = new Set(['workUniverse.files.rename', 'workUniverse.files.delete']);
+
 interface WireTarget {
 	uri: string;
 	root: string;
@@ -39,6 +42,7 @@ type Message =
 	| { type: 'create' }
 	| { type: 'listMany'; items: { key: string; uri: string; root: string }[] }
 	| { type: 'painted' }
+	| { type: 'mode' }
 	| { type: 'open'; uri: string; preview: boolean }
 	| { type: 'select'; items: WireTarget[] }
 	| { type: 'command'; id: string; target?: WireTarget }
@@ -124,14 +128,39 @@ export class UniversePanel implements vscode.WebviewViewProvider, FileTargets, v
 
 	// ---- FileTargets -------------------------------------------------------
 
+	/**
+	 * Paths arriving from the webview (messages, right-click context) are not trusted as they
+	 * are: a path is only used if it lies inside one of this universe's workspaces. The webview
+	 * runs only our own script, so this is a second line of defence, in case a bug ever let
+	 * something else run in it.
+	 */
+	private safeUri(value: unknown): vscode.Uri | undefined {
+		if (typeof value !== 'string') {
+			return undefined;
+		}
+		let uri: vscode.Uri;
+		try {
+			uri = vscode.Uri.parse(value, true);
+		} catch {
+			return undefined;
+		}
+		if (/(^|\/)\.\.(\/|$)/.test(uri.path)) {
+			return undefined; // "…/../…" could climb out of the workspace
+		}
+		const workspaces = this.switcher.getWindowState().universe?.workspaces ?? [];
+		return workspaces.some(w => isInside(uri, w.uri)) ? uri : undefined;
+	}
+
 	fromArg(arg: unknown): FileTarget | undefined {
 		const a = arg as { uri?: unknown; root?: unknown; webviewSection?: unknown } | undefined;
-		if (!a || typeof a.uri !== 'string' || typeof a.root !== 'string') {
+		const uri = this.safeUri(a?.uri);
+		const root = this.safeUri(a?.root);
+		if (!a || !uri || !root) {
 			return undefined;
 		}
 		return {
-			uri: vscode.Uri.parse(a.uri),
-			root: vscode.Uri.parse(a.root),
+			uri,
+			root,
 			isDirectory: a.webviewSection !== 'file',
 			isRoot: a.webviewSection === 'root',
 		};
@@ -369,38 +398,56 @@ export class UniversePanel implements vscode.WebviewViewProvider, FileTargets, v
 				break;
 			case 'listMany': {
 				// Every requested folder is read in parallel and answered in one message.
-				const lists = await this.model.listMany(
-					msg.items.map(i => ({ uri: vscode.Uri.parse(i.uri), root: vscode.Uri.parse(i.root) })),
+				// Folders outside the universe's workspaces are answered with an empty list.
+				const items = (Array.isArray(msg.items) ? msg.items : []).slice(0, 2000);
+				const dirs = items.map(i => ({ uri: this.safeUri(i?.uri), root: this.safeUri(i?.root) }));
+				const lists = await Promise.all(
+					dirs.map(d => (d.uri && d.root ? this.model.list(d.uri, d.root) : Promise.resolve([]))),
 				);
-				const payload = msg.items.map((item, n) => ({ key: item.key, rows: lists[n].map(e => this.toRow(e)) }));
+				const payload = items.map((item, n) => ({ key: String(item?.key), rows: lists[n].map(e => this.toRow(e)) }));
 				this.ensureIcons(payload.flatMap(l => l.rows.flatMap(r => [r.icon, r.iconOpen])));
 				this.post({ type: 'childrenMany', lists: payload });
 				break;
 			}
+			case 'mode':
+				await vscode.commands.executeCommand('workUniverse.setUniverseMode');
+				break;
 			case 'painted':
 				markLate('switch', 'panelPainted');
 				break;
-			case 'open':
-				await vscode.commands.executeCommand('vscode.open', vscode.Uri.parse(msg.uri), {
-					preview: msg.preview,
-					preserveFocus: msg.preview,
-				});
+			case 'open': {
+				const uri = this.safeUri(msg.uri);
+				if (uri) {
+					await vscode.commands.executeCommand('vscode.open', uri, {
+						preview: !!msg.preview,
+						preserveFocus: !!msg.preview,
+					});
+				}
 				break;
+			}
 			case 'select':
-				this.selection = msg.items.map(i => this.toTarget(i));
+				this.selection = (Array.isArray(msg.items) ? msg.items : [])
+					.map(i => this.toTarget(i))
+					.filter((t): t is FileTarget => !!t);
 				break;
-			case 'command':
+			case 'command': {
+				// The webview may only trigger these two commands, never an arbitrary one.
+				if (!WEBVIEW_COMMANDS.has(msg.id)) {
+					break;
+				}
+				const target = msg.target ? this.toTarget(msg.target) : undefined;
 				await vscode.commands.executeCommand(
 					msg.id,
-					msg.target
+					target
 						? {
-								uri: msg.target.uri,
-								root: msg.target.root,
-								webviewSection: msg.target.isRoot ? 'root' : msg.target.dir ? 'folder' : 'file',
+								uri: target.uri.toString(),
+								root: target.root.toString(),
+								webviewSection: target.isRoot ? 'root' : target.isDirectory ? 'folder' : 'file',
 							}
 						: undefined,
 				);
 				break;
+			}
 			case 'runAction': {
 				const single = this.switcher.activeWorkspace();
 				const action = this.shownActions[msg.index];
@@ -409,18 +456,22 @@ export class UniversePanel implements vscode.WebviewViewProvider, FileTargets, v
 				}
 				break;
 			}
-			case 'move':
-				await vscode.commands.executeCommand(
-					'workUniverse.files.move',
-					msg.sources.map(s => vscode.Uri.parse(s)),
-					vscode.Uri.parse(msg.target),
-				);
+			case 'move': {
+				const sources = (Array.isArray(msg.sources) ? msg.sources : []).map(s => this.safeUri(s));
+				const target = this.safeUri(msg.target);
+				// All or nothing: one path outside the universe cancels the move.
+				if (target && sources.length && sources.every(s => !!s)) {
+					await vscode.commands.executeCommand('workUniverse.files.move', sources, target);
+				}
 				break;
+			}
 		}
 	}
 
-	private toTarget(t: WireTarget): FileTarget {
-		return { uri: vscode.Uri.parse(t.uri), root: vscode.Uri.parse(t.root), isDirectory: t.dir, isRoot: t.isRoot };
+	private toTarget(t: WireTarget): FileTarget | undefined {
+		const uri = this.safeUri(t?.uri);
+		const root = this.safeUri(t?.root);
+		return uri && root ? { uri, root, isDirectory: !!t.dir, isRoot: !!t.isRoot } : undefined;
 	}
 
 	/** Expands the tree down to the active editor's file and selects it, like the Explorer. */

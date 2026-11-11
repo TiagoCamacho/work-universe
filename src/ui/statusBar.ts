@@ -45,8 +45,12 @@ export class UniverseStatusBar implements vscode.Disposable {
 		} else {
 			const ws = universe.workspaces.find(w => w.id === state.activeIds[0]);
 			const icon = ws?.icon ?? DEFAULT_WORKSPACE_ICON;
-			this.item.text = `$(globe) ${universe.name} › $(${icon}) ${ws?.name ?? '—'}`;
-			this.item.tooltip = 'Work Universe: click to switch workspace (Ctrl+Alt+W)';
+			// The first icon tells the mode apart: layers = all together, globe = separate environments.
+			const together = state.mode === 'together';
+			this.item.text = `$(${together ? 'layers' : 'globe'}) ${universe.name} › $(${icon}) ${ws?.name ?? '—'}`;
+			this.item.tooltip =
+				`Work Universe · ${together ? 'All together (every project loaded)' : 'Separate environments'}. ` +
+				'Click to switch workspace (Ctrl+Alt+W).';
 		}
 		this.item.show();
 	}

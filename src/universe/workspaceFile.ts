@@ -17,11 +17,23 @@ export interface WorkspaceFileJson {
 	settings?: Record<string, unknown>;
 }
 
+/**
+ * Ids end up in file paths (`universes/<id>`, `actions/<id>…`), and a universe id can come from
+ * a workspace file someone else wrote. Only plain names are accepted, so an id can never point
+ * outside the extension's storage (e.g. `../../Documents`).
+ */
+export function isSafeId(id: unknown): id is string {
+	return typeof id === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(id);
+}
+
 /** Locates each universe's anchor folder and .code-workspace file (generated below global storage by default). */
 export class UniverseFiles {
 	constructor(private readonly storageRoot: vscode.Uri) {}
 
 	dir(universeId: string): vscode.Uri {
+		if (!isSafeId(universeId)) {
+			throw new Error('Invalid universe id.');
+		}
 		return vscode.Uri.joinPath(this.storageRoot, 'universes', universeId);
 	}
 
@@ -44,7 +56,7 @@ export class UniverseFiles {
 			return undefined;
 		}
 		const fromSetting = vscode.workspace.getConfiguration().inspect<string>(UNIVERSE_ID_SETTING)?.workspaceValue;
-		if (fromSetting) {
+		if (isSafeId(fromSetting)) {
 			return fromSetting;
 		}
 		return universes.find(u => sameUri(this.workspaceFile(u), file))?.id;
@@ -65,6 +77,11 @@ export class UniverseFiles {
 
 	/** Makes sure the anchor folder and its settings exist. */
 	async ensureAnchor(universe: Universe): Promise<void> {
+		if (universe.anchor) {
+			// An anchor outside our storage belongs to a workspace file we didn't generate. Never
+			// write into it: that would overwrite the `.vscode/settings.json` of a real folder.
+			return;
+		}
 		const dotVscode = vscode.Uri.joinPath(this.anchor(universe), '.vscode');
 		await vscode.workspace.fs.createDirectory(dotVscode);
 		await writeJson(vscode.Uri.joinPath(dotVscode, 'settings.json'), ANCHOR_SETTINGS);

@@ -1,7 +1,7 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { ActionStore } from './actions/actionStore';
-import { actionsFromScripts, guessIcon, readScripts } from './actions/scripts';
+import { actionsFromScripts, guessIcon, isSafeScriptName, readScripts } from './actions/scripts';
 import { CustomAction } from './actions/types';
 import { UniverseStore } from './model/store';
 import { Universe, UniverseMode } from './model/types';
@@ -326,7 +326,6 @@ export function registerCommands(
 	});
 
 	register('workUniverse.repairUniverse', () => switcher.repair());
-	register('workUniverse.refresh', () => store.refresh());
 
 	register('workUniverse.setCustomActions', async (arg?: Node | string | { workspaceId?: string }) => {
 		const found = await resolveWorkspaceOrActive(arg);
@@ -336,7 +335,14 @@ export function registerCommands(
 		const { workspace } = found;
 		if (!(await actions.exists(workspace.id))) {
 			const folder = vscode.Uri.parse(workspace.uri);
-			const scripts = Object.keys(await readScripts(folder));
+			const allScripts = Object.keys(await readScripts(folder));
+			// Names that could smuggle a second command into the shell are not offered.
+			const scripts = allScripts.filter(isSafeScriptName);
+			if (scripts.length < allScripts.length) {
+				vscode.window.showWarningMessage(
+					`Work Universe: ${allScripts.length - scripts.length} package.json script(s) were skipped because their names contain unusual characters.`,
+				);
+			}
 			let initial: CustomAction[] = [];
 			if (scripts.length) {
 				type Item = vscode.QuickPickItem & { script: string };

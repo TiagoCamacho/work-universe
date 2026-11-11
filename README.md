@@ -7,7 +7,7 @@ Group several project folders (for example `backend` and `frontend`) into a **un
 - **One activity bar panel**, with no sections:
   - **Tabs on top**, one per folder. Click to switch, `+` to add, drag to reorder, right-click to rename, recolor or remove.
   - **File tree below**, like the Explorer: your file icon theme, git and problem colors, the active file revealed, keyboard navigation, multi-select, drag to move, and New/Rename (F2)/Delete from the right-click menu.
-  - **`…` menu** in the panel header to open, create, rename or delete universes.
+  - **`…` menu** in the panel header to open, create, rename or delete universes, and to change a universe's mode.
 - **In-place switching** with no window reload. Each workspace remembers its own tabs (groups, pinned tabs, active tab and cursor) and gets them back when you return to it.
 - **Isolated search**: `Ctrl+Shift+F` only searches the active workspace.
 - **Search whole universe** (`Ctrl+Alt+Shift+F`) temporarily loads every workspace so one search covers all of them.
@@ -43,7 +43,7 @@ Each workspace can have its own row of icon buttons between the tabs and the fil
 }
 ```
 
-- `command` runs in the action's **own terminal** (`<workspace>: <label>`) in the workspace folder. Pressing the button while it's still running lets you **Restart** it or **Show** the terminal.
+- `command` runs in the action's **own terminal** (`<workspace>: <label>`) in the workspace folder. Pressing the button while it's still running lets you **Restart** it, **Show** its terminal or **Stop** it.
 - `vscodeCommand` runs a VS Code command instead (with optional `args`).
 - Optional: `cwd` (relative to the workspace), `env`, and `color` (a hex color for the icon).
 - `headless: true` runs the command without showing its terminal. Press the button again to show, restart or stop it.
@@ -51,6 +51,7 @@ Each workspace can have its own row of icon buttons between the tabs and the fil
 - `active_color` (top level, `"#hex"` or `"none"`) colors the icons of actions that are currently running.
 - New action files start with a comment that documents every property. Colors get VS Code's color picker.
 - Action files live in the extension's storage. Nothing is written into your project.
+- An action runs whatever command you give it, with your permissions. Treat an actions file like a script.
 
 ## How it works
 
@@ -71,6 +72,8 @@ Opening a universe from a normal window reloads the window **once**. Every switc
 |---|---|---|
 | `workUniverse.dirtyFiles` | `prompt` | What happens to unsaved files when you switch: `prompt`, `save` or `keepOpen`. |
 | `workUniverse.applyColors` | `true` | Tint the title bar, activity bar and status bar with the workspace color. |
+| `workUniverse.autoReveal` | `true` | Select the file you are editing in the panel's file tree. |
+| `workUniverse.showExcludedFiles` | `false` | Show files that `files.exclude` hides in the panel's file tree. |
 
 ## Performance
 

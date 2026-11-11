@@ -44,8 +44,15 @@ export function registerFileCommands(context: vscode.ExtensionContext, targets: 
 		if (process.platform === 'win32' && /[<>:"|?*]/.test(v)) {
 			return 'The name contains characters that are not allowed';
 		}
+		// "../x" or "/x" would create or move things outside the folder that was clicked.
+		if (v.split(/[\\/]+/).some(part => part === '..' || part === '.') || /^[\\/]/.test(v) || /^[A-Za-z]:/.test(v)) {
+			return 'The name must stay inside this folder';
+		}
 		return undefined;
 	};
+	/** For rename: a single name, with no folder separators at all. */
+	const validateSingleName = (value: string) =>
+		/[\\/]/.test(value) ? 'A name cannot contain "/" or "\\"' : validateName(value);
 
 	const errorText = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
@@ -94,7 +101,7 @@ export function registerFileCommands(context: vscode.ExtensionContext, targets: 
 			title: 'Rename',
 			value: oldName,
 			valueSelection: [0, dot > 0 ? dot : oldName.length],
-			validateInput: validateName,
+			validateInput: validateSingleName,
 		});
 		if (!name || name.trim() === oldName) {
 			return;

@@ -115,6 +115,16 @@ export const PANEL_SCRIPT = String.raw`
 		}
 		stripEl.append(el('button', { class: 'tool', title: 'Add workspace folder', 'aria-label': 'Add workspace folder', onclick: () => vscode.postMessage({ type: 'add' }) }, codicon('add')));
 		stripEl.append(el('span', { class: 'spacer' }));
+		// Shows which mode the universe is in; click to change it.
+		const together = state.mode === 'together';
+		stripEl.append(el('button', {
+			class: 'tool mode' + (together ? ' on' : ''),
+			title: (together
+				? 'Mode: All together. Every project stays loaded, switching only swaps tabs.'
+				: 'Mode: Separate environments. Only the active project is loaded.') + ' Click to change.',
+			'aria-label': together ? 'Mode: all together. Change mode' : 'Mode: separate environments. Change mode',
+			onclick: () => vscode.postMessage({ type: 'mode' }),
+		}, codicon(together ? 'layers' : 'lock')));
 		if (state.tabs.length > 1) {
 			stripEl.append(el('button', {
 				class: 'tool' + (state.allMode ? ' on' : ''),

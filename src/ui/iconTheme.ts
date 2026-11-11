@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { logError } from '../perf';
 import { parseJsonc } from './util';
 
 interface IconDefinition {
@@ -128,7 +129,7 @@ export class IconThemeResolver implements vscode.Disposable {
 				defIds.forEach((defId, i) => classes.set(defId, 'ic' + i));
 				this.theme = { dir: vscode.Uri.joinPath(file, '..'), extensionRoot: ext.extensionUri, json, maps, classes, defIds };
 			} catch (err) {
-				console.error('[work-universe] could not load icon theme', id, err);
+				logError(`could not load icon theme "${id}"`, err);
 			}
 			return;
 		}

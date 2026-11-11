@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { logError } from '../perf';
 import { isInside, uriKey } from '../universe/paths';
 
 export interface Decoration {
@@ -119,7 +120,7 @@ export class DecorationSource implements vscode.Disposable {
 			);
 			this.schedule();
 		} catch (err) {
-			console.warn('[work-universe] git decorations unavailable', err);
+			logError('git decorations unavailable', err);
 		}
 	}
 

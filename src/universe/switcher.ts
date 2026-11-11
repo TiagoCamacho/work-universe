@@ -277,6 +277,11 @@ export class Switcher implements vscode.Disposable {
 		if (!file || folders.length < 2) {
 			return;
 		}
+		// Only a workspace file laid out like ours is taken over: its first folder must be the
+		// "◈ …" header. Any other file that merely carries the setting is left alone.
+		if (!folders[0].name.startsWith(ANCHOR_PREFIX)) {
+			return;
+		}
 		const configuredName = vscode.workspace.getConfiguration('workUniverse').get<string>('universeName');
 		const name = configuredName || folders[0].name.replace(ANCHOR_PREFIX, '').trim() || 'Universe';
 		const universe: Universe = {

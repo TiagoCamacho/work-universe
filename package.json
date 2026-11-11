@@ -1,7 +1,7 @@
 {
   "name": "work-universe",
   "displayName": "Work Universe",
-  "description": "An unified workspace for multiple projects",
+  "description": "Group several project folders into one window and switch between them with tabs: files, search, editor tabs and custom action buttons follow the active project.",
   "version": "0.0.1",
   "engines": {
     "vscode": "^1.145.0"
@@ -114,12 +114,6 @@
         "title": "Repair Universe Window",
         "category": "Work Universe",
         "icon": "$(tools)"
-      },
-      {
-        "command": "workUniverse.refresh",
-        "title": "Refresh",
-        "category": "Work Universe",
-        "icon": "$(refresh)"
       },
       {
         "command": "workUniverse.files.newFile",
@@ -307,10 +301,6 @@
       "commandPalette": [
         {
           "command": "workUniverse.switchWorkspace",
-          "when": "false"
-        },
-        {
-          "command": "workUniverse.refresh",
           "when": "false"
         },
         {
@@ -556,10 +546,11 @@
     "package": "npm run check-types && npm run lint && node esbuild.js --production",
     "compile-tests": "tsc -p . --outDir out",
     "watch-tests": "tsc -p . -w --outDir out",
-    "pretest": "npm run compile-tests && npm run compile && npm run lint",
+    "pretest": "npm run clean && npm run compile-tests && npm run compile",
     "check-types": "tsc --noEmit",
     "lint": "eslint src",
-    "test": "vscode-test"
+    "test": "vscode-test",
+    "clean": "node -e \"require('fs').rmSync('out',{recursive:true,force:true})\""
   },
   "devDependencies": {
     "@types/jsdom": "^30.0.0",
@@ -579,5 +570,12 @@
   "overrides": {
     "diff": "^8.0.4",
     "serialize-javascript": "^7.0.6"
-  }
+  },
+  "keywords": [
+    "workspace",
+    "multi-root",
+    "project switcher",
+    "folders",
+    "tabs"
+  ]
 }

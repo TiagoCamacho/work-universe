@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { isInside, sameUri } from '../universe/paths';
 import { isHexColor } from '../universe/theme';
+import { isSafeId } from '../universe/workspaceFile';
 import { parseJsonc } from '../ui/util';
 import { ActionsFile, CustomAction, DEFAULT_ACTION_ICON } from './types';
 
@@ -163,6 +164,9 @@ export class ActionStore implements vscode.Disposable {
 	}
 
 	fileFor(workspaceId: string): vscode.Uri {
+		if (!isSafeId(workspaceId)) {
+			throw new Error('Invalid workspace id.');
+		}
 		return vscode.Uri.joinPath(this.dir, workspaceId + ACTIONS_FILE_SUFFIX);
 	}
 

@@ -28,7 +28,19 @@ export async function detectPackageManager(folder: vscode.Uri): Promise<PackageM
 	return 'npm';
 }
 
+/**
+ * A script name is put into a shell command (`npm run <name>`), and package.json comes from the
+ * project, which may not be yours. A name like `dev; rm -rf ~` would run a second command, so
+ * only names made of ordinary characters are turned into buttons.
+ */
+export function isSafeScriptName(name: string): boolean {
+	return /^[A-Za-z0-9][A-Za-z0-9_:.@/+-]*$/.test(name) && name.length <= 100;
+}
+
 export function runCommand(pm: PackageManager, script: string): string {
+	if (!isSafeScriptName(script)) {
+		throw new Error(`Unsafe script name: ${JSON.stringify(script)}`);
+	}
 	return pm === 'npm' ? `npm run ${script}` : `${pm} run ${script}`;
 }
 
@@ -65,5 +77,5 @@ export async function readScripts(folder: vscode.Uri): Promise<Record<string, st
 /** One action per script, e.g. `{ label: "dev", icon: "play", command: "pnpm run dev" }`. */
 export async function actionsFromScripts(folder: vscode.Uri, names: string[]): Promise<CustomAction[]> {
 	const pm = await detectPackageManager(folder);
-	return names.map(name => ({ label: name, icon: guessIcon(name), command: runCommand(pm, name) }));
+	return names.filter(isSafeScriptName).map(name => ({ label: name, icon: guessIcon(name), command: runCommand(pm, name) }));
 }

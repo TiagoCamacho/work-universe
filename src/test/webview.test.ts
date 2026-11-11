@@ -53,6 +53,8 @@ function createPanel() {
 			assert.ok(el, `no ${selector} with text "${text}"`);
 			(el.closest('button, .row') as HTMLElement).click();
 		},
+		modeTitle: () => doc.querySelector('.tool.mode')?.getAttribute('title'),
+		clickMode: () => (doc.querySelector('.tool.mode') as HTMLElement).click(),
 		spacerHeight: () => (doc.querySelector('.vspace') as HTMLElement | null)?.style.height,
 		close: () => window.close(),
 	};
@@ -87,6 +89,13 @@ suite('panel webview behaviour', () => {
 
 			panel.post({ type: 'childrenMany', lists: [{ key: 'file:///w1', rows: [dir('file:///w1', 'src'), file('file:///w1', 'a.ts')] }] });
 			assert.deepStrictEqual(panel.rows(), ['src', 'a.ts']);
+
+			// The mode button shows the current mode and asks the host to change it.
+			assert.ok(panel.modeTitle()?.startsWith('Mode: Separate environments'));
+			panel.clickMode();
+			assert.strictEqual(panel.take('mode').length, 1);
+			panel.post({ ...stateFor('w1'), mode: 'together' });
+			assert.ok(panel.modeTitle()?.startsWith('Mode: All together'));
 			assert.deepStrictEqual(panel.errors, []);
 		} finally {
 			panel.close();

@@ -4,7 +4,7 @@ import { ActionStore } from './actions/actionStore';
 import { registerCommands } from './commands';
 import { registerFileCommands } from './fileCommands';
 import { UniverseStore } from './model/store';
-import { initPerf } from './perf';
+import { initPerf, logError } from './perf';
 import { Switcher } from './universe/switcher';
 import { UniverseFiles } from './universe/workspaceFile';
 import { DecorationSource } from './ui/decorations';
@@ -68,7 +68,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<WorkUn
 		await switcher.onActivated();
 		await files.cleanupOrphans(store.getUniverses().map(u => u.id), switcher.currentUniverseId());
 	} catch (err) {
-		console.error('[work-universe] activation step failed', err);
+		logError('activation step failed', err);
 	}
 
 	return { store, switcher };

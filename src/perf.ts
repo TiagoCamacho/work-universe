@@ -58,7 +58,7 @@ export function markLate(label: string, phase: string): void {
 	}
 	const ms = Math.round((performance.now() - start) * 10) / 10;
 	if (ms < 10000) {
+		// Recorded only; it appears in the timeline's own line when that is written.
 		marks[phase] = ms;
-		channel?.info(`${label}: ${phase}=${ms}ms`);
 	}
 }
